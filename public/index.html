@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>clocktower</title>
+<style>
+  body { --bg:#131417; --panel:#1b1d22; --panel2:#22252c; --line:#2e323b;
+    --ink:#e6e8ec; --dim:#8b909b; --pink:#f27ab0; --pinkbg:#38202e;
+    --ask:#e3c94e; --askbg:#332e17; --bad:#e08a8a; }
+  body.day { --bg:#efece3; --panel:#faf8f1; --panel2:#f1ede1; --line:#d9d3c3;
+    --ink:#28262f; --dim:#847e6e; --pink:#c2337f; --pinkbg:#fadfee;
+    --ask:#8f7a10; --askbg:#f5ecc6; --bad:#b04a4a; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:15px/1.45 -apple-system, system-ui, sans-serif; height:100vh; overflow:hidden;
+         transition:background .4s, color .4s; }
+  button { font:inherit; background:var(--panel2); color:var(--ink); border:1px solid var(--line);
+           border-radius:7px; padding:5px 12px; cursor:pointer; }
+  button:hover { border-color:var(--dim); }
+  button.on { background:var(--ink); color:var(--bg); border-color:var(--ink); }
+  button.ghost { background:none; border:none; color:var(--dim); }
+  button.back { background:none; border:none; color:var(--ink); font-size:34px; line-height:1;
+                padding:2px 22px 8px 8px; }
+  button.back:hover { color:var(--dim); }
+  button.moon { background:none; border:none; padding:4px 8px; display:flex; align-items:center; }
+  textarea, input, select { font:inherit; background:var(--panel); color:var(--ink);
+    border:1px solid var(--line); border-radius:8px; padding:9px 11px; width:100%; }
+  textarea:focus, input:focus, select:focus { outline:none; border-color:var(--dim); }
+  textarea { resize:none; }
+  .top { display:flex; align-items:center; gap:12px; padding:10px 16px; border-bottom:1px solid var(--line); height:52px; }
+  .top .t { color:var(--dim); font-variant-numeric:tabular-nums; }
+  #view { height:calc(100vh - 52px); overflow:hidden; }
+
+  /* home */
+  .home { display:flex; flex-direction:column; height:100%; padding:14px; gap:14px; }
+  .boxes { flex:1; display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:14px; min-height:0; }
+  .box { border:1.5px solid var(--c); border-radius:14px; background:var(--panel); padding:14px 16px;
+         cursor:pointer; display:flex; flex-direction:column; gap:8px; min-height:0; overflow:hidden;
+         transition:box-shadow .25s; }
+  .box:hover { background:var(--panel2); }
+  .box.glow { box-shadow:0 0 30px 2px var(--c); }
+  .box .hd { display:flex; align-items:baseline; gap:10px; }
+  .box .nm { font-size:24px; font-weight:650; color:var(--c); }
+  .box .rl { color:var(--ink); font-size:14px; }
+  .box .mdl { color:var(--dim); font-size:12px; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dot { width:9px; height:9px; border-radius:50%; background:var(--dim); margin-left:auto; flex-shrink:0; align-self:center; }
+  .dot.thinking { background:var(--c,var(--ink)); animation:pulse 1s infinite; }
+  .dot.error { background:var(--bad); }
+  @keyframes pulse { 50% { opacity:.25; } }
+  .st { color:var(--dim); font-size:13px; min-height:18px; }
+  .action { background:var(--pinkbg); border:1px solid var(--pink); color:var(--pink);
+            border-radius:8px; padding:7px 10px; display:flex; gap:10px; align-items:flex-start; font-size:14px; cursor:pointer; }
+  .action.seen { opacity:.45; border-style:dashed; }
+  .action b { text-transform:uppercase; font-size:12px; letter-spacing:.04em; }
+  .askline { border:1px solid var(--ask); background:var(--askbg); color:var(--ask); border-radius:8px; padding:7px 10px;
+             display:flex; gap:10px; align-items:flex-start; font-size:14px; cursor:pointer; }
+  .sayline { display:flex; gap:8px; align-items:flex-start; background:var(--panel2);
+             border-radius:8px; padding:6px 9px; font-size:14px; }
+  .sayline .txt { flex:1; }
+  .err { color:var(--bad); font-size:13px; }
+  .pingbar { display:flex; align-items:flex-end; gap:12px; flex-shrink:0; }
+  .pingbar .lbl { font-weight:650; letter-spacing:.08em; font-size:13px; color:var(--dim);
+                  cursor:pointer; padding:12px 4px; }
+  .pingbar .lbl:hover { color:var(--ink); }
+  #ping { height:46px; font-size:15px; }
+
+  /* fullscreen views */
+  .full { height:100%; display:flex; flex-direction:column; padding:14px; gap:12px; }
+  .full .hd { display:flex; align-items:center; gap:12px; flex-shrink:0; }
+  .full .hd .role { font-size:22px; font-weight:650; }
+  .cols { flex:1; display:grid; grid-template-columns:1fr 1fr; gap:14px; min-height:0; }
+  .col { display:flex; flex-direction:column; gap:10px; min-height:0; }
+  .col h4 { margin:0; font-size:12px; font-weight:600; letter-spacing:.06em; color:var(--dim); text-transform:uppercase; }
+  #ai-priv { height:110px; flex-shrink:0; }
+  #ai-sheet { flex:1; font-size:14px; line-height:1.5; }
+  .hist { flex:1; overflow-y:auto; border:1px solid var(--line); border-radius:10px; background:var(--panel); padding:10px; }
+  .hist .h-turn { padding:8px 4px; border-bottom:1px solid var(--line); font-size:14px; }
+  .hist .h-meta { color:var(--dim); font-size:12px; }
+
+  /* action flash (spin the laptop to the storyteller) */
+  .flash { height:100%; display:flex; flex-direction:column; align-items:center; justify-content:center;
+           gap:26px; cursor:pointer; padding:40px; text-align:center; }
+  .flash .who { font-size:42px; font-weight:700; color:var(--c); }
+  .flash .what { font-size:64px; font-weight:750; line-height:1.15; }
+  .flash .why { font-size:22px; color:var(--dim); max-width:900px; }
+
+  /* context stream */
+  .stream { flex:1; overflow-y:auto; border:1px solid var(--line); border-radius:12px;
+            background:var(--panel); padding:14px 18px; font-size:15px; }
+  .s-phase { margin:16px 0 8px; color:var(--dim); font-size:12px; letter-spacing:.08em; text-transform:uppercase;
+             border-bottom:1px solid var(--line); padding-bottom:4px; }
+  .s-town { white-space:pre-wrap; margin:2px 0; }
+  .s-note { color:var(--dim); font-style:italic; white-space:pre-wrap; margin:2px 0; }
+  .s-say { white-space:pre-wrap; margin:2px 0; }
+  .s-say b { color:var(--c); }
+  .ctx-in { display:flex; gap:10px; flex-shrink:0; align-items:flex-end; }
+  #ctx-input { height:82px; font-size:15px; }
+  .hint { color:var(--dim); font-size:12px; flex-shrink:0; }
+
+  /* setup */
+  .setup { max-width:680px; margin:24px auto; display:flex; flex-direction:column; gap:10px;
+           height:calc(100% - 48px); overflow-y:auto; padding:0 10px; }
+  .setup h4 { margin:8px 0 0; font-size:12px; font-weight:600; letter-spacing:.06em; color:var(--dim); text-transform:uppercase; }
+  .setup .row { display:grid; grid-template-columns:1fr 110px 1fr; gap:8px; }
+  .setup .row input.persona { grid-column:1/4; }
+  .setup .hrow { display:flex; gap:8px; align-items:center; }
+  .setup .hrow .mic { color:var(--dim); font-size:13px; width:52px; flex-shrink:0; }
+</style>
+</head>
+<body>
+<div class="top" id="top"></div>
+<div id="view"></div>
+
+<script>
+const ROLES = {
+  townsfolk:["washerwoman","librarian","investigator","chef","empath","fortune teller","undertaker","monk","ravenkeeper","virgin","slayer","soldier","mayor"],
+  outsider:["butler","drunk","recluse","saint"],
+  minion:["poisoner","spy","scarlet woman","baron"],
+  demon:["imp"],
+};
+const COLORS = ["#54b868","#e0a34e","#e06a8a","#5e9fe0"];
+const ALLIGATOR_PERSONA = "You are Alligator, a stately plushie alligator with a grand ceremonial manner. Open every spoken utterance with 'I will speak the following words:' and close it with 'I have spoken.' The words in between stay brutally short.";
+function alignmentOf(r){ return (ROLES.minion.includes(r)||ROLES.demon.includes(r))?"evil":"good"; }
+function esc(s){ return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function colorOf(name){ const i=S.players.findIndex(p=>p.name===name); return COLORS[i>=0?i%4:0]; }
+
+let S = { players:[], queue:[], ctx:[], humans:[], phase:{time:"night",day:1}, phaseLabel:"night 1", turnN:0, model:"sonnet", speaking:null };
+let view = { name:"home", ai:null };
+let ui = { priv:{}, buffer:"", auto:false, secs:45, speakingId:null, speakingPlayer:null, sheetDirty:{},
+  humanCount: 8,
+  humanNames: ["","","","","","","",""],
+  setupRows:[
+    {name:"Alligator", model:"fable", role:"empath", persona:ALLIGATOR_PERSONA},
+    {name:"", model:"google/gemini-3.1-pro-preview", role:"fortune teller", persona:""},
+    {name:"", model:"openai/gpt-5.6-sol", role:"imp", persona:""},
+    {name:"", model:"moonshotai/kimi-k3", role:"soldier", persona:""},
+  ]};
+
+async function api(p,d){ const r=await fetch(p,{method:d?"POST":"GET",headers:{"Content-Type":"application/json"},body:d?JSON.stringify(d):undefined}); return r.json(); }
+
+async function poll(){
+  try {
+    S = await api("/api/state");
+    if (S.speaking){ ui.speakingId=S.speaking.id; ui.speakingPlayer=S.speaking.player; }
+    else if (ui.speakingId!=null && !speechSynthesis.speaking){ ui.speakingId=null; ui.speakingPlayer=null; }
+    document.body.classList.toggle("day", S.phase.time==="day");
+    if (!S.players.length && view.name!=="setup") nav("setup");
+    update();
+  } catch(e){}
+  setTimeout(poll, 1200);
+}
+
+// ---------- navigation ----------
+function nav(name, ai){
+  view = { name, ai: ai ?? view.ai };
+  const v = document.getElementById("view");
+  if (name==="home") {
+    v.innerHTML = `<div class="home"><div class="boxes" id="boxes"></div>
+      <div class="pingbar"><span class="lbl" onclick="nav('ctx')">CONTEXT</span>
+        <textarea id="ping" oninput="ui.buffer=this.value"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();doPush()}"></textarea></div></div>`;
+    const p=document.getElementById("ping"); p.value=ui.buffer; p.focus();
+  }
+  if (name==="ai") {
+    const p = S.players.find(x=>x.name===view.ai); if(!p) return nav("home");
+    const c = colorOf(p.name);
+    v.innerHTML = `<div class="full" style="--c:${c}">
+      <div class="hd"><button class="back" onclick="nav('home')">&larr;</button>
+        <span class="role" style="color:${c}">${esc(p.name)}</span>
+        <span style="color:var(--ink)">${esc(p.role)}</span>
+        <span style="color:var(--dim)">${esc(p.model||S.model)}</span>
+        <span class="dot" id="ai-dot"></span></div>
+      <div class="st" id="ai-status"></div><div id="ai-extra"></div>
+      <div class="cols">
+        <div class="col">
+          <textarea id="ai-priv" oninput="ui.priv['${esc(p.name)}']=this.value"></textarea>
+          <div style="display:flex;gap:8px"><button onclick="wakeNow('${esc(p.name)}')">wake now</button></div>
+          <h4 style="display:flex;gap:8px;align-items:center">sheet
+            <button class="ghost" id="ai-sheet-save" style="display:none" onclick="saveSheet('${esc(p.name)}')">save</button></h4>
+          <textarea id="ai-sheet" oninput="ui.sheetDirty['${esc(p.name)}']=this.value; document.getElementById('ai-sheet-save').style.display='inline'"></textarea>
+        </div>
+        <div class="col"><div class="hist" id="ai-hist"></div></div>
+      </div></div>`;
+    const priv=document.getElementById("ai-priv");
+    priv.value = ui.priv[p.name]||"";
+    document.getElementById("ai-sheet").value = ui.sheetDirty[p.name] ?? p.sheet;
+    if (ui.sheetDirty[p.name]!=null) document.getElementById("ai-sheet-save").style.display="inline";
+    priv.focus();
+  }
+  if (name==="flash") {
+    const p = S.players.find(x=>x.name===view.ai); if(!p||!p.action) return nav("home");
+    const a = p.action;
+    v.innerHTML = `<div class="flash" style="--c:${colorOf(p.name)}" onclick="ackFlash('${esc(p.name)}')">
+      <div class="who">${esc(p.name)} · ${esc(p.role)}</div>
+      <div class="what">${esc(a.type)} &rarr; ${esc(a.target||"—")}</div>
+      <div class="why">${esc(a.note||"")}</div></div>`;
+  }
+  if (name==="ctx") {
+    v.innerHTML = `<div class="full">
+      <div class="hd"><button class="back" onclick="nav('home')">&larr;</button>
+        <span class="role">CONTEXT</span></div>
+      <div class="stream" id="stream"></div>
+      <div class="ctx-in">
+        <textarea id="ctx-input" oninput="ui.buffer=this.value"
+          onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();doPush()}"></textarea>
+        <button class="on" style="height:44px" onclick="doPush()">push</button></div>
+      <div class="hint">! prefix = wrangler note</div>
+    </div>`;
+    const inp=document.getElementById("ctx-input");
+    inp.value = ui.buffer; inp.focus();
+    ui.streamLen = -1;
+  }
+  if (name==="setup") {
+    const opts = r=>Object.entries(ROLES).map(([g,rs])=>`<optgroup label="${g}">${rs.map(x=>`<option ${x===r?"selected":""}>${x}</option>`).join("")}</optgroup>`).join("");
+    v.innerHTML = `<div class="setup">
+      <h4>ai players</h4>
+      ${ui.setupRows.map((r,i)=>`<div class="row" style="border-left:3px solid ${COLORS[i]};padding-left:10px">
+        <input value="${esc(r.name)}" placeholder="name (blank = model name)" onchange="ui.setupRows[${i}].name=this.value">
+        <input list="model-list" value="${esc(r.model)}" placeholder="model" onchange="ui.setupRows[${i}].model=this.value">
+        <select onchange="ui.setupRows[${i}].role=this.value">${opts(r.role)}</select>
+        <input class="persona" value="${esc(r.persona)}" onchange="ui.setupRows[${i}].persona=this.value" placeholder="persona (optional)">
+      </div>`).join("")}
+      <h4>human players — <select style="width:64px;display:inline-block" onchange="setHumanCount(+this.value)">
+        ${[2,3,4,5,6,7,8,9,10].map(n=>`<option ${n===ui.humanCount?"selected":""}>${n}</option>`).join("")}</select> of them</h4>
+      ${Array.from({length:ui.humanCount},(_,i)=>`<div class="hrow"><span class="mic">mic ${i+1}</span>
+        <input value="${esc(ui.humanNames[i]||"")}" onchange="ui.humanNames[${i}]=this.value"></div>`).join("")}
+      <div style="display:flex;gap:8px;margin-top:6px"><button class="on" style="flex:1;padding:10px" onclick="doSetup()">deal</button>
+        ${S.players.length?`<button onclick="nav('home')">cancel</button>`:""}</div>
+      <div class="hint">dealing resets the game (starts at night 1). disk logs are kept.<br>
+      model: sonnet / haiku / opus run on the claude subscription; anything with a slash (e.g. openai/gpt-5.1) runs via openrouter.</div>
+      <datalist id="model-list"></datalist></div>`;
+    loadModels();
+  }
+  update();
+}
+function setHumanCount(n){ ui.humanCount=n; while(ui.humanNames.length<n) ui.humanNames.push(""); nav("setup"); }
+async function loadModels(){
+  const dl=document.getElementById("model-list"); if(!dl) return;
+  const local=["sonnet","haiku","opus"];
+  try { const r=await api("/api/models");
+    dl.innerHTML = local.concat(r.models||[]).map(m=>`<option value="${esc(m)}">`).join("");
+  } catch(e){ dl.innerHTML = local.map(m=>`<option value="${esc(m)}">`).join(""); }
+}
+
+// ---------- update ----------
+function moonSvg(){
+  return S.phase.time==="night"
+    ? `<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="1.6"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z" fill="var(--ink)" fill-opacity=".15"/></svg>`
+    : `<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" stroke-width="1.6"><circle cx="12" cy="12" r="4.5" fill="var(--ink)" fill-opacity=".15"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5 5l2.1 2.1M16.9 16.9L19 19M19 5l-2.1 2.1M7.1 16.9L5 19"/></svg>`;
+}
+function update(){
+  document.getElementById("top").innerHTML = `
+    <button class="moon" onclick="togglePhase()" title="toggle day/night">${moonSvg()}</button>
+    <span class="t">${esc(S.phaseLabel||"")}</span>
+    <span class="t" style="margin-left:14px">turn ${S.turnN}</span>
+    <span style="flex:1"></span>
+    <button class="${ui.auto?"on":""}" onclick="toggleAuto()">auto ${ui.secs}s</button>
+    <select style="width:74px" onchange="ui.secs=+this.value; if(ui.auto){toggleAuto();toggleAuto()}">
+      ${[30,45,60,90].map(x=>`<option ${x===ui.secs?"selected":""}>${x}</option>`).join("")}</select>
+    <button class="ghost" onclick="nav('setup')">setup</button>`;
+
+  if (view.name==="home") {
+    document.getElementById("boxes").innerHTML = S.players.map((p,i)=>{
+      const says = S.queue.filter(q=>q.player===p.name);
+      return `<div class="box ${ui.speakingPlayer===p.name?"glow":""}" style="--c:${COLORS[i]}" onclick="nav('ai','${esc(p.name)}')">
+        <div class="hd"><span class="nm">${esc(p.name)}</span><span class="rl">${esc(p.role)}</span><span class="mdl">${esc(p.model||S.model)}</span>
+          <span class="dot ${p.parseError?"error":p.status==="thinking"?"thinking":""}"></span></div>
+        ${p.parseError?`<div class="err">${esc(p.parseError)}</div>`:""}
+        <div class="st">${esc(p.lastStatus||"")}</div>
+        ${p.ask?`<div class="askline" onclick="event.stopPropagation();nav('ai','${esc(p.name)}')">
+          <b>?</b><span style="flex:1">${esc(p.ask.text)}</span>
+          <button onclick="event.stopPropagation();askSeen('${esc(p.name)}')">ok</button></div>`:""}
+        ${p.action?`<div class="action ${p.action.seen?"seen":""}" onclick="event.stopPropagation();nav('flash','${esc(p.name)}')">
+          <div style="flex:1"><b>${esc(p.action.type)}</b> &rarr; ${esc(p.action.target||"—")}
+            <div style="font-size:13px">${esc(p.action.note||"")}</div></div></div>`:""}
+        ${says.map(q=>`<div class="sayline" onclick="event.stopPropagation()">
+          <span class="txt">${q.to!=="town"?`<b style="color:${COLORS[i]}">&rsaquo; ${esc(q.to)}</b> `:""}${esc(q.text)}</span>
+          <button onclick="speak(${q.id})">${ui.speakingId===q.id?"stop":"speak"}</button>
+          <button class="ghost" onclick="dequeue(${q.id},true)">&times;</button></div>`).join("")}
+      </div>`;
+    }).join("");
+  }
+
+  if (view.name==="ai") {
+    const p = S.players.find(x=>x.name===view.ai); if(!p) return;
+    document.getElementById("ai-dot").className = "dot "+(p.parseError?"error":p.status==="thinking"?"thinking":"");
+    document.getElementById("ai-status").textContent = p.lastStatus||"";
+    const says = S.queue.filter(q=>q.player===p.name);
+    document.getElementById("ai-extra").innerHTML =
+      (p.parseError?`<div class="err">${esc(p.parseError)}</div>`:"") +
+      (p.ask?`<div class="askline" style="margin:4px 0"><b>?</b>
+        <span style="flex:1">${esc(p.ask.text)}</span><button onclick="askSeen('${esc(p.name)}')">ok</button></div>`:"") +
+      (p.action?`<div class="action ${p.action.seen?"seen":""}" onclick="nav('flash','${esc(p.name)}')"><div style="flex:1"><b>${esc(p.action.type)}</b> &rarr; ${esc(p.action.target||"—")}
+        <div style="font-size:13px">${esc(p.action.note||"")}</div></div></div>`:"") +
+      says.map(q=>`<div class="sayline" style="margin:4px 0">
+        <span class="txt">${q.to!=="town"?`<b>&rsaquo; ${esc(q.to)}</b> `:""}${esc(q.text)}</span>
+        <button onclick="speak(${q.id})">${ui.speakingId===q.id?"stop":"speak"}</button>
+        <button class="ghost" onclick="dequeue(${q.id},true)">&times;</button></div>`).join("");
+    const sheet = document.getElementById("ai-sheet");
+    if (document.activeElement!==sheet && ui.sheetDirty[p.name]==null && sheet.value!==p.sheet) sheet.value = p.sheet;
+    document.getElementById("ai-hist").innerHTML = p.history.slice().reverse().map(h=>`
+      <div class="h-turn"><div class="h-meta">turn ${h.turn} · ${esc(h.phase)}${h.edits?` · ${h.edits} edits`:""}${h.editsFailed?` · <span style="color:var(--bad)">${h.editsFailed} failed</span>`:""}${h.sayHeld?` · <span style="color:var(--ask)">speech held (night)</span>`:""}</div>
+        ${esc(h.status)}${h.say.map(s=>`<div>&ldquo;${esc(s.text)}&rdquo;</div>`).join("")}
+        ${h.ask?`<div style="color:var(--ask)">? ${esc(h.ask)}</div>`:""}
+        ${h.action?`<div style="color:var(--pink)">${esc(h.action.type)} &rarr; ${esc(h.action.target||"")}</div>`:""}
+      </div>`).join("") || `<span class="h-meta">no turns yet</span>`;
+  }
+
+  if (view.name==="ctx") {
+    if (ui.streamLen !== S.ctx.length) {
+      ui.streamLen = S.ctx.length;
+      const el = document.getElementById("stream");
+      const pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 60 || el.scrollTop===0;
+      el.innerHTML = S.ctx.map(e=>{
+        if (e.kind==="phase") return `<div class="s-phase">${esc(e.text)}</div>`;
+        if (e.kind==="say") return `<div class="s-say" style="--c:${colorOf(e.player)}"><b>${esc(e.player)}${e.to&&e.to!=="town"?" &rsaquo; "+esc(e.to):""}</b> ${esc(e.text)}</div>`;
+        if (e.kind==="note") return `<div class="s-note">! ${esc(e.text)}</div>`;
+        return `<div class="s-town">${esc(e.text)}</div>`;
+      }).join("");
+      if (pinned) el.scrollTop = el.scrollHeight;
+    }
+  }
+}
+
+// ---------- actions ----------
+async function doSetup(){
+  const players = ui.setupRows.filter(r=>r.role).map(r=>({name:r.name, model:r.model, role:r.role, alignment:alignmentOf(r.role), persona:r.persona}));
+  const humans = ui.humanNames.slice(0,ui.humanCount).map((n,i)=>({name:n, mic:i+1}));
+  await api("/api/setup",{players, humans});
+  ui.priv={}; ui.sheetDirty={}; ui.buffer="";
+  S = await api("/api/state"); nav("home");
+}
+function splitBuffer(){
+  const lines = ui.buffer.split("\n");
+  return { town: lines.filter(l=>!l.startsWith("!")).join("\n").trim(),
+           note: lines.filter(l=>l.startsWith("!")).map(l=>l.slice(1).trim()).join("\n") };
+}
+async function doPush(){
+  const {town,note} = splitBuffer();
+  await api("/api/push",{targets:S.players.map(p=>p.name), town, note, private:ui.priv});
+  ui.buffer=""; ui.priv={};
+  for (const id of ["ctx-input","ping","ai-priv"]) { const el=document.getElementById(id); if(el) el.value=""; }
+  S = await api("/api/state"); update();
+}
+async function wakeNow(name){
+  await api("/api/push",{targets:[name], town:"", note:"", private:{[name]:ui.priv[name]||""}});
+  delete ui.priv[name];
+  const pv=document.getElementById("ai-priv"); if(pv && view.ai===name) pv.value="";
+  S = await api("/api/state"); update();
+}
+async function saveSheet(name){
+  await api("/api/edit",{player:name, field:"sheet", value:ui.sheetDirty[name]??""});
+  delete ui.sheetDirty[name];
+  const b=document.getElementById("ai-sheet-save"); if(b) b.style.display="none";
+}
+async function ack(name){ await api("/api/edit",{player:name, field:"actionSeen"}); S=await api("/api/state"); update(); }
+async function ackFlash(name){ await api("/api/edit",{player:name, field:"actionSeen"}); S=await api("/api/state"); nav("home"); }
+async function askSeen(name){ await api("/api/edit",{player:name, field:"askSeen"}); S=await api("/api/state"); update(); }
+async function togglePhase(){ const r=await api("/api/phase",{toggle:true}); S.phase=r.phase; S=await api("/api/state");
+  document.body.classList.toggle("day", S.phase.time==="day"); update(); }
+async function dequeue(id,remove){
+  if(ui.speakingId===id){ await api("/api/speak",{stop:true}); speechSynthesis.cancel(); ui.speakingId=null; ui.speakingPlayer=null; }
+  await api("/api/queue",{id,remove}); S=await api("/api/state"); update();
+}
+let autoTimer=null;
+function toggleAuto(){
+  ui.auto=!ui.auto; clearInterval(autoTimer);
+  if(ui.auto) autoTimer=setInterval(doPush, ui.secs*1000);
+  update();
+}
+
+// speech plays on the server (the machine the real speakers hang off); browser TTS fallback
+async function speak(id){
+  const q=S.queue.find(x=>x.id===id); if(!q) return;
+  if(ui.speakingId===id){ await api("/api/speak",{stop:true}); speechSynthesis.cancel(); ui.speakingId=null; ui.speakingPlayer=null; update(); return; }
+  try {
+    const r = await api("/api/speak",{id});
+    if(!r.err){ ui.speakingId=id; ui.speakingPlayer=q.player; update(); return; }
+    if(r.err==="already speaking") return;
+  } catch(e){}
+  speakBrowser(q);
+}
+function speakBrowser(q){
+  speechSynthesis.cancel();
+  const u=new SpeechSynthesisUtterance(q.text);
+  const voices=speechSynthesis.getVoices().filter(v=>v.lang.startsWith("en"));
+  const idx=S.players.findIndex(p=>p.name===q.player);
+  if(voices.length) u.voice=voices[(idx*3+1)%voices.length];
+  u.pitch=[1,0.8,1.2,0.9][idx%4]; u.rate=1.1;
+  u.onend=()=>{ ui.speakingId=null; ui.speakingPlayer=null; dequeue(q.id,false); };
+  ui.speakingId=q.id; ui.speakingPlayer=q.player;
+  speechSynthesis.speak(u); update();
+}
+
+// arrows navigate from anywhere: down = context, up = home.
+// exceptions: the sheet editor and setup view keep normal arrows; selects always do.
+document.addEventListener("keydown", e=>{
+  const a = document.activeElement;
+  const inExempt = view.name==="setup" || (a && (a.tagName==="SELECT" || a.id==="ai-sheet"));
+  if (view.name==="flash" && (e.key==="Escape"||e.key==="ArrowUp"||e.key==="Enter")) { nav("home"); return; }
+  if (!inExempt && e.key==="ArrowDown" && view.name!=="ctx") { e.preventDefault(); nav("ctx"); return; }
+  if (!inExempt && e.key==="ArrowUp" && view.name!=="home") { e.preventDefault(); nav("home"); return; }
+  if (e.key==="Escape") { nav("home"); return; }
+  if (a && (a.tagName==="TEXTAREA"||a.tagName==="INPUT"||a.tagName==="SELECT")) return;
+  if ("1234".includes(e.key)) { const p=S.players[+e.key-1]; if(p) nav("ai",p.name); }
+});
+
+speechSynthesis.getVoices();
+(async()=>{ try{ S=await api("/api/state"); }catch(e){} nav(S.players.length?"home":"setup"); poll(); })();
+</script>
+</body>
+</html>

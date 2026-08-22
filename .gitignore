@@ -1,0 +1,8 @@
+openrouter.key
+*.key
+game/
+audio/venv/
+voices/venv/
+voices/models/
+__pycache__/
+.DS_Store
