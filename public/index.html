@@ -222,7 +222,7 @@ function nav(name, ai){
         <span class="role" style="color:${c}">${esc(p.name)}</span>
         <span style="color:var(--ink)">${esc(p.role)}</span>
         <span style="color:var(--dim)">${esc(p.model||S.model)}</span>
-        <button class="ghost" onclick="nav('feed','${esc(p.name)}')">transcript</button>
+        <button class="ghost" onclick="nav('feed','${esc(p.name)}')">expand</button>
         <span class="dot" id="ai-dot"></span></div>
       <div class="st" id="ai-status"></div><div id="ai-extra"></div>
       <div class="cols">
@@ -233,8 +233,11 @@ function nav(name, ai){
             <button class="ghost" id="ai-sheet-save" style="display:none" onclick="saveSheet('${esc(p.name)}')">save</button></h4>
           <textarea id="ai-sheet" oninput="ui.sheetDirty['${esc(p.name)}']=this.value; document.getElementById('ai-sheet-save').style.display='inline'"></textarea>
         </div>
-        <div class="col"><div class="hist" id="ai-hist"></div></div>
+        <div class="col"><h4>context window</h4><div class="feed" id="feed-body"></div></div>
       </div></div>`;
+    ui.feedSig = "";
+    if (!ui.sysCache) ui.sysCache = {};
+    api("/api/sys/"+encodeURIComponent(p.name)).then(r=>{ ui.sysCache[p.name]=r.sys||""; ui.feedSig=""; renderFeed(); });
     const priv=document.getElementById("ai-priv");
     priv.value = ui.priv[p.name]||"";
     document.getElementById("ai-sheet").value = ui.sheetDirty[p.name] ?? p.sheet;
@@ -476,6 +479,17 @@ function feedLines(text, extraCls){
     return `<div class="${cls}">${esc(l)||"&nbsp;"}</div>`;
   }).join("");
 }
+// the sheet rides along inside every tick's input; the context window shows it elided
+// (it lives in its own box) but expandable, so "every token" stays literally true.
+function elideSheet(input){
+  const m = input.indexOf("=== your sheet");
+  if (m < 0) return { pre: input, sheet: null, post: "" };
+  const start = input.indexOf("\n", m);
+  const nextHdr = input.indexOf("\n=== ", start);
+  return { pre: input.slice(0, m),
+           sheet: input.slice(start + 1, nextHdr < 0 ? input.length : nextHdr),
+           post: nextHdr < 0 ? "" : input.slice(nextHdr + 1) };
+}
 function renderFeed(){
   const el = document.getElementById("feed-body"); if(!el) return;
   const p = S.players.find(x=>x.name===view.ai); if(!p) return;
@@ -484,12 +498,17 @@ function renderFeed(){
   if (sig === ui.feedSig) return;
   ui.feedSig = sig;
   const pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 80 || el.scrollTop===0;
-  let html = `<details><summary style="color:var(--dim);cursor:pointer">system prompt — briefing + rules + secret card + seat (start of every tick's context)</summary>
+  let html = `<details><summary style="color:var(--dim);cursor:pointer">system prompt — briefing + full rules + secret card + seat (every tick's context starts with this)</summary>
     <pre>${esc(ui.sysCache?.[p.name]||"loading...")}</pre></details>`;
   for (const h of p.history){
     const key = p.name+":"+h.turn+":"+h.ts;
     html += `<div class="f-tick">tick ${h.turn} · ${esc(h.phase)}</div>`;
-    if (h.input) html += feedLines(h.input);
+    if (h.input) {
+      const {pre, sheet, post} = elideSheet(h.input);
+      html += feedLines(pre);
+      if (sheet!=null) html += `<details><summary style="color:var(--dim);font-size:12px;cursor:pointer">sheet as it was this tick (elided — see sheet box)</summary><pre>${esc(sheet)}</pre></details>`;
+      html += feedLines(post);
+    }
     html += `<div class="f-out">
       <div style="color:var(--dim);font-size:12px">${esc(p.name)} responds
         ${h.thinking?`<button class="ghost f-cot" onclick="ui.cotOpen['${key}']=!ui.cotOpen['${key}'];ui.feedSig='';renderFeed()">${ui.cotOpen[key]?"hide thought":"…"}</button>`:""}</div>
@@ -571,12 +590,7 @@ function update(){
         <button class="ghost" onclick="dequeue(${q.id},true)">&times;</button></div>`).join("");
     const sheet = document.getElementById("ai-sheet");
     if (document.activeElement!==sheet && ui.sheetDirty[p.name]==null && sheet.value!==p.sheet) sheet.value = p.sheet;
-    document.getElementById("ai-hist").innerHTML = p.history.slice().reverse().map(h=>`
-      <div class="h-turn"><div class="h-meta">tick ${h.turn} · ${esc(h.phase)}${h.edits?` · ${h.edits} edits`:""}${h.editsFailed?` · <span style="color:var(--bad)">${h.editsFailed} failed</span>`:""}${h.sayHeld?` · <span style="color:var(--ask)">speech held (night)</span>`:""}</div>
-        ${esc(h.status)}${h.say.map(s=>`<div>&ldquo;${esc(s.text)}&rdquo;</div>`).join("")}
-        ${h.ask?`<div style="color:var(--ask)">? ${esc(h.ask)}</div>`:""}
-        ${h.action?`<div style="color:var(--pink)">${esc(h.action.type)} &rarr; ${esc(h.action.target||"")}</div>`:""}
-      </div>`).join("") || `<span class="h-meta">no turns yet</span>`;
+    renderFeed();
   }
 
   if (view.name==="mics") renderMics();
