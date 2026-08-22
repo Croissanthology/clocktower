@@ -257,6 +257,31 @@ function deliverQueued(id) {
 const SYNTH = path.join(ROOT, 'voices', 'synth.sh');
 let speakChild = null;
 let modelsCache = { ts: 0, list: [] };
+
+// --- mic monitoring: the server owns the transcriber process ---
+const AUDIO_PY = path.join(ROOT, 'audio', 'venv', 'bin', 'python');
+let micProc = null;
+let mics = { running: false, device: '', channels: 0, levels: [], speech_ago: [], ts: 0, err: '' };
+let inputsCache = { ts: 0, list: [] };
+
+function micStart(device, channels) {
+  if (micProc) return;
+  mics = { running: true, device, channels, levels: [], speech_ago: [], ts: 0, err: '' };
+  let errTail = '';
+  micProc = execFile(AUDIO_PY, [path.join(ROOT, 'audio', 'transcribe.py'),
+    '--device', device, '--channels', String(channels), '--server', `http://localhost:${PORT}`],
+    { maxBuffer: 50 * 1024 * 1024 }, (err) => {
+      micProc = null;
+      mics.running = false;
+      if (err && !err.killed) mics.err = (errTail.trim().split('\n').pop() || String(err)).slice(0, 200);
+    });
+  micProc.stderr.on('data', d => { errTail = (errTail + d).slice(-2000); });
+  micProc.stdout.on('data', () => {});
+}
+function micStop() {
+  if (micProc) try { micProc.kill('SIGTERM'); } catch (e) {}
+  mics.running = false;
+}
 function voiceFor(idx, p) {
   if (p.voice) return p.voice;
   try { return JSON.parse(fs.readFileSync(path.join(ROOT, 'voices', 'mapping.json'), 'utf8'))[idx] || ''; }
@@ -351,7 +376,31 @@ const server = http.createServer(async (req, res) => {
     return res.end(fs.readFileSync(path.join(ROOT, 'public', 'index.html')));
   }
   if (req.method === 'GET' && url.pathname === '/api/state') {
-    return send(200, { ...state, phaseLabel: phaseLabel(), rulesLoaded: fs.existsSync(RULES_FILE), model: MODEL });
+    return send(200, { ...state, phaseLabel: phaseLabel(), rulesLoaded: fs.existsSync(RULES_FILE), model: MODEL, mics });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/miclevels') {
+    const b = await body(req);
+    Object.assign(mics, { levels: b.levels || [], speech_ago: b.speech_ago || [], channels: b.channels || mics.channels, device: b.device || mics.device, ts: Date.now() });
+    return send(200, { ok: true });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/mic/start') {
+    const b = await body(req);
+    if (!b.device) return send(400, { err: 'device required' });
+    micStart(b.device, +b.channels || 1);
+    return send(200, { ok: true });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/mic/stop') {
+    micStop();
+    return send(200, { ok: true });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/inputs') {
+    if (Date.now() - inputsCache.ts < 30000) return send(200, { inputs: inputsCache.list });
+    execFile(AUDIO_PY, ['-c', 'import json,sounddevice as sd; print(json.dumps([{"idx":i,"name":d["name"],"in":d["max_input_channels"]} for i,d in enumerate(sd.query_devices()) if d["max_input_channels"]>0]))'],
+      { timeout: 10000 }, (err, stdout) => {
+        if (!err) try { inputsCache = { ts: Date.now(), list: JSON.parse(stdout) }; } catch (e) {}
+        send(200, { inputs: inputsCache.list });
+      });
+    return;
   }
   // live whisper transcription lands here: {mic: <1-based channel>, text: "..."}
   if (req.method === 'POST' && url.pathname === '/api/hear') {

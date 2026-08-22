@@ -22,6 +22,7 @@ Examples:
 import argparse
 import queue
 import sys
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from math import gcd
@@ -270,11 +271,42 @@ def main():
     print(f"model warm in {time.time() - t0:.2f}s")
 
     audio_q = queue.Queue()
+    levels = np.zeros(n_channels)  # latest 0.5s-block rms per channel
+    last_speech = [0.0] * n_channels  # wall time of last block over threshold
 
     def callback(indata, frames, time_info, status):
         if status:
             print(f"stream status: {status}", file=sys.stderr)
         audio_q.put(indata.copy())
+        now = time.time()
+        for ch in range(n_channels):
+            l = rms(indata[:, ch])
+            levels[ch] = l
+            if l >= args.threshold:
+                last_speech[ch] = now
+
+    # once a second, tell the game server what the mics are hearing (drives the UI meters)
+    def report_levels():
+        while True:
+            time.sleep(1.0)
+            if requests is None:
+                continue
+            now = time.time()
+            try:
+                requests.post(
+                    f"{args.server}/api/miclevels",
+                    json={
+                        "device": dev["name"],
+                        "channels": n_channels,
+                        "levels": [round(float(x), 4) for x in levels],
+                        "speech_ago": [round(now - t, 1) if t else None for t in last_speech],
+                    },
+                    timeout=1,
+                )
+            except requests.exceptions.RequestException:
+                pass
+
+    threading.Thread(target=report_levels, daemon=True).start()
 
     executor = ThreadPoolExecutor(max_workers=max(1, n_channels))
 
