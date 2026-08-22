@@ -24,6 +24,8 @@
                 padding:2px 22px 8px 8px; }
   button.back:hover { color:var(--dim); }
   button.moon { background:none; border:none; padding:4px 8px; display:flex; align-items:center; }
+  button.pause.paused { background:var(--bad); color:var(--bg); border-color:var(--bad); font-weight:700;
+                        animation:pulse 1.4s infinite; }
   textarea, input, select { font:inherit; background:var(--panel); color:var(--ink);
     border:1px solid var(--line); border-radius:8px; padding:9px 11px; width:100%; }
   textarea:focus, input:focus, select:focus { outline:none; border-color:var(--dim); }
@@ -193,8 +195,7 @@ function nav(name, ai){
     const a = p.action;
     v.innerHTML = `<div class="flash" style="--c:${colorOf(p.name)}" onclick="ackFlash('${esc(p.name)}')">
       <div class="who">${esc(p.name)} · ${esc(p.role)}</div>
-      <div class="what">${esc(a.type)} &rarr; ${esc(a.target||"—")}</div>
-      <div class="why">${esc(a.note||"")}</div></div>`;
+      <div class="what">${esc(a.type)} &rarr; ${esc(a.target||"—")}</div></div>`;
   }
   if (name==="ctx") {
     v.innerHTML = `<div class="full">
@@ -255,6 +256,7 @@ function update(){
     <span class="t">${esc(S.phaseLabel||"")}</span>
     <span class="t" style="margin-left:14px">turn ${S.turnN}</span>
     <span style="flex:1"></span>
+    <button class="pause ${S.paused?"paused":""}" onclick="togglePause()">${S.paused?"PAUSED — resume":"pause"}</button>
     <button class="${ui.auto?"on":""}" onclick="toggleAuto()">auto ${ui.secs}s</button>
     <select style="width:74px" onchange="ui.secs=+this.value; if(ui.auto){toggleAuto();toggleAuto()}">
       ${[30,45,60,90].map(x=>`<option ${x===ui.secs?"selected":""}>${x}</option>`).join("")}</select>
@@ -272,8 +274,7 @@ function update(){
           <b>?</b><span style="flex:1">${esc(p.ask.text)}</span>
           <button onclick="event.stopPropagation();askSeen('${esc(p.name)}')">ok</button></div>`:""}
         ${p.action?`<div class="action ${p.action.seen?"seen":""}" onclick="event.stopPropagation();nav('flash','${esc(p.name)}')">
-          <div style="flex:1"><b>${esc(p.action.type)}</b> &rarr; ${esc(p.action.target||"—")}
-            <div style="font-size:13px">${esc(p.action.note||"")}</div></div></div>`:""}
+          <div style="flex:1"><b>${esc(p.action.type)}</b> &rarr; ${esc(p.action.target||"—")}</div></div>`:""}
         ${says.map(q=>`<div class="sayline" onclick="event.stopPropagation()">
           <span class="txt">${q.to!=="town"?`<b style="color:${COLORS[i]}">&rsaquo; ${esc(q.to)}</b> `:""}${esc(q.text)}</span>
           <button onclick="speak(${q.id})">${ui.speakingId===q.id?"stop":"speak"}</button>
@@ -291,8 +292,7 @@ function update(){
       (p.parseError?`<div class="err">${esc(p.parseError)}</div>`:"") +
       (p.ask?`<div class="askline" style="margin:4px 0"><b>?</b>
         <span style="flex:1">${esc(p.ask.text)}</span><button onclick="askSeen('${esc(p.name)}')">ok</button></div>`:"") +
-      (p.action?`<div class="action ${p.action.seen?"seen":""}" onclick="nav('flash','${esc(p.name)}')"><div style="flex:1"><b>${esc(p.action.type)}</b> &rarr; ${esc(p.action.target||"—")}
-        <div style="font-size:13px">${esc(p.action.note||"")}</div></div></div>`:"") +
+      (p.action?`<div class="action ${p.action.seen?"seen":""}" onclick="nav('flash','${esc(p.name)}')"><div style="flex:1"><b>${esc(p.action.type)}</b> &rarr; ${esc(p.action.target||"—")}</div></div>`:"") +
       says.map(q=>`<div class="sayline" style="margin:4px 0">
         <span class="txt">${q.to!=="town"?`<b>&rsaquo; ${esc(q.to)}</b> `:""}${esc(q.text)}</span>
         <button onclick="speak(${q.id})">${ui.speakingId===q.id?"stop":"speak"}</button>
@@ -337,6 +337,7 @@ function splitBuffer(){
            note: lines.filter(l=>l.startsWith("!")).map(l=>l.slice(1).trim()).join("\n") };
 }
 async function doPush(){
+  if (S.paused) return;
   const {town,note} = splitBuffer();
   await api("/api/push",{targets:S.players.map(p=>p.name), town, note, private:ui.priv});
   ui.buffer=""; ui.priv={};
@@ -363,6 +364,7 @@ async function dequeue(id,remove){
   if(ui.speakingId===id){ await api("/api/speak",{stop:true}); speechSynthesis.cancel(); ui.speakingId=null; ui.speakingPlayer=null; }
   await api("/api/queue",{id,remove}); S=await api("/api/state"); update();
 }
+async function togglePause(){ const r=await api("/api/pause",{}); S.paused=r.paused; update(); }
 let autoTimer=null;
 function toggleAuto(){
   ui.auto=!ui.auto; clearInterval(autoTimer);

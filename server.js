@@ -14,7 +14,7 @@ const RULES_FILE = path.join(ROOT, 'rules', 'trouble-brewing.md');
 const TEMPLATE_FILE = path.join(ROOT, 'prompts', 'system-template.md');
 const PORT = process.env.PORT || 4141;
 const MODEL = process.env.CT_MODEL || 'sonnet';
-const EFFORT = process.env.CT_EFFORT || 'low';
+const EFFORT = process.env.CT_EFFORT || 'medium'; // thinking on by default, both backends
 const TIMEOUT_MS = 120000;
 const PLAY_RATE = '1.1';
 
@@ -29,7 +29,7 @@ const NIGHT_CHOOSERS = {
 
 fs.mkdirSync(GAME, { recursive: true });
 
-let state = { players: [], queue: [], ctx: [], humans: [], phase: { time: 'night', day: 1 }, hadFirstDay: false, turnN: 0, seq: 0, speaking: null };
+let state = { players: [], queue: [], ctx: [], humans: [], phase: { time: 'night', day: 1 }, hadFirstDay: false, turnN: 0, seq: 0, speaking: null, paused: false };
 try {
   const disk = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
   state = Object.assign(state, disk);
@@ -45,6 +45,7 @@ try {
     });
   }
   if (!state.humans) state.humans = [];
+  if (state.paused === undefined) state.paused = false;
   if (state.hadFirstDay === undefined) state.hadFirstDay = true;
   for (const p of state.players) {
     if (p.ctxCursor === undefined) p.ctxCursor = state.ctx.length;
@@ -153,7 +154,7 @@ function openrouterKey() {
 function callOpenrouter(model, sysText, userMsg, cb) {
   const key = openrouterKey();
   if (!key) return cb(new Error('no openrouter key — paste it into clocktower/openrouter.key (one line) or set OPENROUTER_API_KEY'), '');
-  const bodyStr = JSON.stringify({ model, max_tokens: 3000,
+  const bodyStr = JSON.stringify({ model, max_tokens: 8000, reasoning: { effort: EFFORT },
     messages: [{ role: 'system', content: sysText }, { role: 'user', content: userMsg }] });
   const req = https.request({ hostname: 'openrouter.ai', path: '/api/v1/chat/completions', method: 'POST',
     headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
@@ -231,7 +232,7 @@ function pushToPlayer(p, push, attempt = 1) {
 }
 
 function doPushTargets(targets, priv) {
-  if (!targets.length) return [];
+  if (state.paused || !targets.length) return [];
   state.turnN++;
   const base = { turnN: state.turnN, night: state.phase.time === 'night', label: phaseLabel() };
   for (const p of targets) pushToPlayer(p, { ...base, ctxText: ctxSlice(p), priv: priv[p.name] || '' });
@@ -437,6 +438,11 @@ const server = http.createServer(async (req, res) => {
     if (b.field === 'actionSeen' && p.action) p.action.seen = true;
     if (b.field === 'askSeen') p.ask = null;
     save(); return send(200, { ok: true });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/pause') {
+    const b = await body(req);
+    state.paused = b.paused !== undefined ? !!b.paused : !state.paused;
+    save(); return send(200, { paused: state.paused });
   }
   if (req.method === 'POST' && url.pathname === '/api/phase') {
     const b = await body(req);
