@@ -119,7 +119,12 @@ function extractJson(text) {
 function applyEdits(p, edits) {
   const applied = [], failed = [];
   for (const e of Array.isArray(edits) ? edits : []) {
-    if (!e || typeof e.replace !== 'string') continue;
+    if (!e) continue;
+    if (typeof e.append === 'string') {
+      if (e.append.trim()) { p.sheet = (p.sheet ? p.sheet + '\n' : '') + e.append; applied.push(e); }
+      continue;
+    }
+    if (typeof e.replace !== 'string') continue;
     const find = typeof e.find === 'string' ? e.find : '';
     if (find === '') { p.sheet = (p.sheet ? p.sheet + '\n' : '') + e.replace; applied.push(e); continue; }
     if (p.sheet.includes(find)) { p.sheet = p.sheet.replace(find, e.replace); applied.push(e); }
@@ -150,7 +155,15 @@ function buildUserMessage(p, push) {
     `reminder: you are ${p.name}, secretly the ${p.role} (${p.alignment}).`,
     `=== your sheet, exactly as you left it ===\n${p.sheet || '(empty — write it via edits with find:"")'}`,
   ];
-  if (p.feedback) parts.push(`=== correction from last turn ===\n${p.feedback}`);
+  const last = p.history[p.history.length - 1];
+  if (last && ((last.say || []).length || last.action || last.ask)) {
+    const bits = [];
+    for (const s of last.say || []) bits.push(`you said${s.to && s.to !== 'town' ? ' to ' + s.to : ''}: "${s.text}"${last.sayHeld ? ' (held — night, not spoken)' : ' (plays through your speaker when margot triggers it)'}`);
+    if (last.action) bits.push(`your action: ${last.action.type} → ${last.action.target || '—'}`);
+    if (last.ask) bits.push(`you asked margot: ${last.ask}`);
+    parts.push(`=== your previous tick (tick ${last.turn}) — what you did ===\n${bits.join('\n')}`);
+  }
+  if (p.feedback) parts.push(`=== correction from last tick ===\n${p.feedback}`);
   if (push.ctxText) parts.push(`=== heard since your last turn (live mics + AI speakers; may contain transcription errors) ===\n${push.ctxText}`);
   if (push.priv) parts.push(`=== MARGOT, PRIVATELY — only you receive this ===\n${push.priv}`);
   parts.push(`=== respond now with the JSON contract only ===`);

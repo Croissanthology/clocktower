@@ -50,13 +50,15 @@
   .f-out { border-left:2px solid var(--c, var(--line)); padding-left:12px; margin:8px 0 4px; }
   .f-pending { opacity:.38; }
   .f-cot { font-size:11px; padding:0 6px; }
-  /* seating circle */
-  .circle-wrap { position:relative; width:340px; height:340px; margin:8px auto; }
-  .seat { position:absolute; width:74px; margin:-16px 0 0 -37px; text-align:center; cursor:pointer;
-          font-size:12px; padding:5px 2px; border-radius:8px; border:1.5px solid var(--line); background:var(--panel2);
+  /* seating */
+  .slot-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px 14px; }
+  .slot-grid .srow { display:flex; align-items:center; gap:8px; }
+  .slot-grid .sn { color:var(--dim); font-size:12px; width:52px; flex-shrink:0; text-align:right; }
+  .circle-wrap { position:relative; width:420px; height:360px; margin:14px auto 6px; }
+  .seat { position:absolute; width:72px; margin:-13px 0 0 -36px; text-align:center;
+          font-size:11px; padding:4px 3px; border-radius:7px; border:1.5px solid var(--line); background:var(--panel2);
           overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .seat.ai { border-color:var(--c); color:var(--c); }
-  .seat.sel { outline:2px solid var(--ink); }
   textarea, input, select { font:inherit; background:var(--panel); color:var(--ink);
     border:1px solid var(--line); border-radius:8px; padding:9px 11px; width:100%; }
   textarea:focus, input:focus, select:focus { outline:none; border-color:var(--dim); }
@@ -278,7 +280,8 @@ function nav(name, ai){
         ${[2,3,4,5,6,7,8,9,10].map(n=>`<option ${n===ui.humanCount?"selected":""}>${n}</option>`).join("")}</select> of them</h4>
       ${Array.from({length:ui.humanCount},(_,i)=>`<div class="hrow"><span class="mic">mic ${i+1}</span>
         <input value="${esc(ui.humanNames[i]||"")}" onchange="ui.humanNames[${i}]=this.value"></div>`).join("")}
-      <h4>seating — click two seats to swap (mirror the real table; clockwise)</h4>
+      <h4>seating — record who actually sat where, clockwise from any seat</h4>
+      <div class="slot-grid" id="seat-slots"></div>
       <div class="circle-wrap" id="circle"></div>
       <div style="display:flex;gap:8px;margin-top:6px"><button class="on" style="flex:1;padding:10px" onclick="doSetup()">deal</button>
         ${S.players.length?`<button onclick="saveSeats()">save seats only</button><button onclick="saveMics()">save mics only</button><button onclick="nav('home')">cancel</button>`:""}</div>
@@ -305,36 +308,46 @@ function setupNames(){
   const humans = ui.humanNames.slice(0,ui.humanCount).map(n=>({name:n.trim(),ai:false})).filter(x=>x.name);
   return ais.concat(humans);
 }
-function renderCircle(){
-  const el = document.getElementById("circle"); if(!el) return;
+function reconcileSeats(){
   const people = setupNames();
   const names = people.map(x=>x.name);
-  // keep prior ordering for names that still exist; append newcomers
-  ui.seatNames = ((ui.seatNames && ui.seatNames.length ? ui.seatNames : (S.seats||[])).filter(n=>names.includes(n)))
-    .concat(names.filter(n=>!(ui.seatNames||S.seats||[]).includes(n)));
+  // keep prior ordering for names that still exist; append newcomers at the end
+  const prior = (ui.seatNames && ui.seatNames.length ? ui.seatNames : (S.seats||[]));
+  ui.seatNames = prior.filter(n=>names.includes(n)).concat(names.filter(n=>!prior.includes(n)));
+  return people;
+}
+function renderCircle(){
+  const slots = document.getElementById("seat-slots");
+  const circle = document.getElementById("circle");
+  if (!slots || !circle) return;
+  const people = reconcileSeats();
   const n = ui.seatNames.length;
-  el.innerHTML = ui.seatNames.map((name,i)=>{
-    const a = -Math.PI/2 + (2*Math.PI*i)/Math.max(1,n);
-    const x = 170 + 140*Math.cos(a), y = 170 + 140*Math.sin(a);
+  const aiColor = name => {
     const p = people.find(x=>x.name===name);
-    const aiIdx = p&&p.ai ? people.filter(x=>x.ai).findIndex(x=>x.name===name) : -1;
-    return `<div class="seat ${p&&p.ai?"ai":""} ${ui.seatSel===name?"sel":""}" title="${esc(name)}"
-      style="left:${x}px;top:${y}px;${aiIdx>=0?`--c:${COLORS[aiIdx%4]}`:""}"
-      onclick="seatClick('${esc(name)}')">${esc(name)}</div>`;
+    if (!p || !p.ai) return null;
+    return COLORS[people.filter(x=>x.ai).findIndex(x=>x.name===name)%4];
+  };
+  slots.innerHTML = ui.seatNames.map((name,i)=>`
+    <div class="srow"><span class="sn">seat ${i+1}</span>
+      <select onchange="assignSeat(${i}, this.value)" style="${aiColor(name)?`color:${aiColor(name)}`:""}">
+        ${ui.seatNames.map(x=>`<option ${x===name?"selected":""}>${esc(x)}</option>`).join("")}
+      </select></div>`).join("");
+  circle.innerHTML = ui.seatNames.map((name,i)=>{
+    const a = -Math.PI/2 + (2*Math.PI*i)/Math.max(1,n);
+    const x = 210 + 150*Math.cos(a), y = 175 + 140*Math.sin(a);
+    const c = aiColor(name);
+    return `<div class="seat ${c?"ai":""}" title="seat ${i+1}: ${esc(name)}"
+      style="left:${x}px;top:${y}px;${c?`--c:${c}`:""}">${esc(name)}</div>`;
   }).join("");
 }
-function seatClick(name){
-  if (!ui.seatSel) { ui.seatSel = name; }
-  else if (ui.seatSel === name) { ui.seatSel = null; }
-  else {
-    const a = ui.seatNames.indexOf(ui.seatSel), b = ui.seatNames.indexOf(name);
-    [ui.seatNames[a], ui.seatNames[b]] = [ui.seatNames[b], ui.seatNames[a]];
-    ui.seatSel = null;
-  }
+// picking a name that's already in another seat swaps the two occupants
+function assignSeat(i, name){
+  const j = ui.seatNames.indexOf(name);
+  if (j >= 0 && j !== i) [ui.seatNames[i], ui.seatNames[j]] = [ui.seatNames[j], ui.seatNames[i]];
   renderCircle();
 }
 async function saveSeats(){
-  renderCircle();
+  reconcileSeats();
   await api("/api/seats",{seats:ui.seatNames}); nav("home");
 }
 function setHumanCount(n){ ui.humanCount=n; while(ui.humanNames.length<n) ui.humanNames.push(""); nav("setup"); }
