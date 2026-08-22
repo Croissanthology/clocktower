@@ -171,3 +171,177 @@ head with `snape`/`alba`/`cori` on quality while keeping zero extra Python
 setup. I'm not recommending any of these into the mapping now since they
 aren't installed/verifiable in this environment — only tested,
 already-working voices are in the mapping above.
+
+---
+
+## Kokoro upgrade (2026-08-22)
+
+Added Kokoro-82M as a third engine, prefixed `k-` in `synth.sh`, alongside
+`say` and `piper`. **Kept the existing 4-voice mapping (`snape`/`poppy`/
+`oldman`/`alba`) — did not recast.** Kokoro is a clear quality upgrade over
+piper, but on this machine it is not consistently fast enough for the
+game's real-time speech budget once a line runs to two sentences (the
+game's own system prompt allows "occasionally longer" lines), so recasting
+would trade voice quality for audible dead air. Full reasoning below.
+
+### What installed
+
+Tried `kokoro-onnx` (CPU, ONNX Runtime) first, per the "pick whichever
+installs cleanly and is fast enough" instruction — it installed cleanly
+into the existing `venv` (Python 3.12.13, same venv piper uses) with no
+compiled/system dependencies:
+
+```bash
+cd /Users/margot/code/clocktower/voices
+venv/bin/pip install kokoro-onnx   # pulls in espeakng-loader (bundled
+                                    # espeak-ng binary, no system install
+                                    # needed), phonemizer, onnxruntime
+                                    # (already present from piper)
+```
+
+Model files (not on PyPI, fetched from the kokoro-onnx GitHub release —
+same source the project's own docs point to):
+
+```bash
+curl -sSL -o models/kokoro-v1.0.onnx \
+  https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx   # 325.5MB
+curl -sSL -o models/voices-v1.0.bin \
+  https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin     # 28.2MB
+```
+
+I did not try `mlx-audio` — `kokoro-onnx` installed on the first attempt
+with zero friction and, on a quick single-voice check, landed close to the
+~2.5s target, so there was no forcing function to try the GPU/MLX path as
+well. (If margot wants to chase the 2-sentence case under budget later,
+`mlx-audio`'s Metal-accelerated Kokoro is the next thing to try — Apple
+Silicon GPU inference should cut the per-call cost meaningfully below the
+CPU ONNX Runtime numbers below.)
+
+New wrapper: `voices/kokoro_synth.py` (called by `synth.sh`, not meant to
+be run by hand) — loads `models/kokoro-v1.0.onnx` +
+`models/voices-v1.0.bin`, synthesizes with `kokoro.create(text, voice=...,
+speed=1.0, lang="en-us")`, writes a mono 16-bit PCM WAV via `soundfile`.
+Output is 24kHz (vs piper's 22.05kHz) — `afplay`/the server's playback
+path don't care, both are plain WAV.
+
+### Candidate voices sampled
+
+Kokoro-82M ships ~50 named voices (`af_`/`am_` = American female/male,
+`bf_`/`bm_` = British female/male). Sampled 10 candidates on the game line
+("I checked Priya last night, and I don't like what I saw."), saved to
+`voices/samples/k-<kokoro-name>.wav`, all verified with `afinfo` (mono,
+24000Hz, 16-bit PCM, durations 2.9–4.3s — all valid, non-empty). I can't
+literally listen to audio, so character notes below combine (a) the
+`kokoro-onnx`/Kokoro-82M project's own published per-voice quality grades
+(community `VOICES.md` — a widely-cited ranking each voice got from the
+model's training data quality), and (b) a rough automated pitch check
+(`voices/samples/pitch_check.py`, autocorrelation-based F0 estimate) I
+wrote to sanity-check male/female register and relative "depth" — not a
+substitute for margot actually listening to the `samples/k-*.wav` files
+before trusting this, but enough to pick sensible candidates.
+
+| slug | kokoro voice | median F0 | notes |
+|---|---|---|---|
+| `k-george` | `bm_george` | 143Hz | British male, formal/measured delivery — the "posh, dry" pick |
+| `k-fable` | `bm_fable` | 143Hz (noisier) | British male, storyteller cadence, slightly warmer than george |
+| `k-lewis` | `bm_lewis` | 82Hz | British male, lowest pitch of the set — deep, plain |
+| `k-fenrir` | `am_fenrir` | 130Hz | American male, rougher/weathered texture — best "gravelly" pick |
+| `k-onyx` | `am_onyx` | 89Hz | American male, deepest overall — alternate gravelly/old option |
+| `k-heart` | `af_heart` | 200Hz | American female, Kokoro's flagship/highest-graded voice — warm, natural |
+| `k-nicole` | `af_nicole` | 159Hz | American female, breathy/ASMR-style, noticeably slower pacing (4.3s vs ~3s for others on the same line) |
+| `k-bella` | `af_bella` | 207Hz | American female, bright, clear |
+| `k-emma` | `bf_emma` | 183Hz | British female, crisp RP-adjacent — best distinct-accent woman option |
+| `k-isabella` | `bf_isabella` | 214Hz | British female, higher/lighter than Emma |
+
+All 10 are wired into `synth.sh` as working `k-*` slugs (see below) even
+though the mapping wasn't recast — they're available any time margot wants
+to use kokoro for something not on the real-time hot path (e.g. a menu/
+intro line, or if she decides the latency tradeoff below is worth it for
+the full cast anyway).
+
+### Latency — why the mapping was NOT recast
+
+Tested end-to-end through `synth.sh` (fresh process each call: Python
+startup + model load + phonemize + synth), warm disk cache, on
+`k-george`/`k-heart`/`k-fenrir`:
+
+| voice | 1-sentence line (the game line, ~13 words) | 2-sentence line (~30 words) |
+|---|---|---|
+| `k-george` | 3.08s (steady; one cold first-ever call spiked to 12.6s) | 4.47–5.14s |
+| `k-heart` | 2.73–2.86s | 4.25–4.62s |
+| `k-fenrir` | 2.72–2.78s | 4.56–4.64s |
+
+For comparison, piper on this machine: **0.6–2.3s** (see table above),
+`say`: **0.6–0.7s**.
+
+The single-sentence game line lands right at the ~2.5–3s edge of budget.
+But the game's own system prompt (`prompts/system-template.md`) explicitly
+allows "1–2 spoken sentences, occasionally longer when it truly matters" —
+and every 2-sentence measurement, across all 3 voices tested, landed
+**consistently and clearly over 3s** (4.25–5.14s, 9/9 runs). Per the brief
+("if consistently over ~3s, say so honestly and do NOT recast"), that's
+the situation here: kokoro is markedly more natural than piper, but it is
+2.5–8x slower, and the slow case is exactly the case the game explicitly
+permits. Recasting the live 4-player cast to kokoro would mean occasional
+4–5+ second dead air mid-scene, in a game whose entire speech design
+principle is "FLASH-QUICK." That's not a good trade, so `mapping.json` is
+unchanged.
+
+(Aside: the venv/models are CPU-only ONNX Runtime; a `mlx-audio` GPU port
+would likely close most of this gap, since Apple Silicon Neural Engine/GPU
+inference is usually 2-4x faster than CPU ONNX Runtime for models this
+size — flagged above as the next thing to try if margot wants to revisit
+this.)
+
+### Mapping — unchanged
+
+```json
+["snape", "poppy", "oldman", "alba"]
+```
+
+Same as before this task: 1 Alligator/Snape (piper, dry posh British
+male), 2 poppy (piper/semaine, bright upbeat female), 3 oldman (say,
+elderly male), 4 alba (piper, Scottish female). No change made.
+
+If margot decides the latency tradeoff is acceptable anyway (e.g. she's
+fine with occasional multi-second pauses, or she gets `mlx-audio` running
+and it comes in faster), a reasonable kokoro 4-cast, following the
+brief's per-slot guidance, would be:
+
+1. **Alligator** → `k-george` (`bm_george`) — grand, formal, ceremonial
+   British male; reads as a herald/stately-plushie-alligator voice better
+   than any piper option.
+2. `k-heart` (`af_heart`) — warm, natural American female, Kokoro's
+   best-quality voice overall.
+3. `k-emma` (`bf_emma`) — distinct British female, different accent
+   register from `k-heart` (US vs UK) for maximum separation between the
+   two women.
+4. `k-fenrir` (`am_fenrir`) — gravelly, weathered male, deliberately far
+   from `k-george`'s polish for male/male contrast.
+
+That's 2 men / 2 women, US + UK accents on both genders, and the
+`k-george`/`k-fenrir` pair gives the sharpest possible contrast on the male
+side (posh/formal vs rough/weathered). Not applied — recorded here as the
+candidate cast if latency stops being a blocker.
+
+### synth.sh changes
+
+New `kokoro` engine branch, dispatched exactly like the existing `mac`/
+`piper` branches — same error handling (missing binary, missing model
+files, empty text, non-zero exit + stderr message, output-file
+existence/non-empty check). All prior voice-ids (`oldman`,
+`oldman-wheeze`, `monotone`, `eerie`, `snape`, `northern`, `cori`, `alba`,
+`jenny`, `prudence`, `spike`, `obadiah`, `poppy`) are untouched and
+regression-tested (`snape`, `oldman` re-run after the edit — both still
+produce valid WAVs, exit 0).
+
+```bash
+./synth.sh k-george out.wav "I checked Priya last night, and I don't like what I saw."
+./synth.sh k-heart   out.wav "..."
+./synth.sh k-fenrir  out.wav "..."
+# ...plus k-fable, k-lewis, k-onyx, k-nicole, k-bella, k-emma, k-isabella
+```
+
+Tested: all 10 new `k-*` slugs synthesize successfully (verified via
+`afinfo`); `snape` and `oldman` regression-pass; unknown voice-id
+(`bogus-voice`) still fails with the correct usage message and exit 1.

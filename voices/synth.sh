@@ -12,6 +12,8 @@ set -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PIPER_BIN="$SCRIPT_DIR/venv/bin/piper"
+PYTHON_BIN="$SCRIPT_DIR/venv/bin/python3"
+KOKORO_SYNTH="$SCRIPT_DIR/kokoro_synth.py"
 MODELS_DIR="$SCRIPT_DIR/models"
 
 usage() {
@@ -21,6 +23,8 @@ usage() {
   echo "  macOS say:   oldman  oldman-wheeze  monotone  eerie" >&2
   echo "  piper:       snape  northern  cori  alba  jenny" >&2
   echo "  piper/semaine (multi-speaker, one model): prudence  spike  obadiah  poppy" >&2
+  echo "  kokoro (neural, k- prefix): k-george  k-fable  k-lewis  k-fenrir  k-onyx" >&2
+  echo "               k-heart  k-nicole  k-bella  k-emma  k-isabella" >&2
   exit 1
 }
 
@@ -42,6 +46,7 @@ ENGINE=""
 MACVOICE=""
 MODEL=""
 SPEAKER=""
+KOKORO_VOICE=""
 
 case "$VOICE_ID" in
   oldman)
@@ -70,6 +75,26 @@ case "$VOICE_ID" in
     ENGINE=piper; MODEL="$MODELS_DIR/en_GB-semaine-medium.onnx"; SPEAKER=2 ;;
   poppy)
     ENGINE=piper; MODEL="$MODELS_DIR/en_GB-semaine-medium.onnx"; SPEAKER=3 ;;
+  k-george)
+    ENGINE=kokoro; KOKORO_VOICE="bm_george" ;;
+  k-fable)
+    ENGINE=kokoro; KOKORO_VOICE="bm_fable" ;;
+  k-lewis)
+    ENGINE=kokoro; KOKORO_VOICE="bm_lewis" ;;
+  k-fenrir)
+    ENGINE=kokoro; KOKORO_VOICE="am_fenrir" ;;
+  k-onyx)
+    ENGINE=kokoro; KOKORO_VOICE="am_onyx" ;;
+  k-heart)
+    ENGINE=kokoro; KOKORO_VOICE="af_heart" ;;
+  k-nicole)
+    ENGINE=kokoro; KOKORO_VOICE="af_nicole" ;;
+  k-bella)
+    ENGINE=kokoro; KOKORO_VOICE="af_bella" ;;
+  k-emma)
+    ENGINE=kokoro; KOKORO_VOICE="bf_emma" ;;
+  k-isabella)
+    ENGINE=kokoro; KOKORO_VOICE="bf_isabella" ;;
   *)
     echo "Error: unknown voice-id '$VOICE_ID'" >&2
     usage
@@ -104,6 +129,24 @@ elif [ "$ENGINE" = "piper" ]; then
   fi
   if ! printf '%s' "$TEXT" | "$PIPER_BIN" -m "$MODEL" "${SPK_ARGS[@]}" -f "$OUT" 2>/tmp/synth_err.$$; then
     echo "Error: piper synthesis failed for voice-id '$VOICE_ID' (model='$MODEL')" >&2
+    cat /tmp/synth_err.$$ >&2
+    rm -f /tmp/synth_err.$$
+    exit 1
+  fi
+  rm -f /tmp/synth_err.$$
+
+elif [ "$ENGINE" = "kokoro" ]; then
+  if [ ! -x "$PYTHON_BIN" ]; then
+    echo "Error: venv python not found at $PYTHON_BIN" >&2
+    exit 1
+  fi
+  if [ ! -f "$MODELS_DIR/kokoro-v1.0.onnx" ] || [ ! -f "$MODELS_DIR/voices-v1.0.bin" ]; then
+    echo "Error: kokoro model files not found in $MODELS_DIR" >&2
+    echo "  Expected: kokoro-v1.0.onnx and voices-v1.0.bin" >&2
+    exit 1
+  fi
+  if ! "$PYTHON_BIN" "$KOKORO_SYNTH" "$KOKORO_VOICE" "$OUT" "$TEXT" 2>/tmp/synth_err.$$; then
+    echo "Error: kokoro synthesis failed for voice-id '$VOICE_ID' (kokoro-voice='$KOKORO_VOICE')" >&2
     cat /tmp/synth_err.$$ >&2
     rm -f /tmp/synth_err.$$
     exit 1

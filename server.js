@@ -214,7 +214,11 @@ function pushToPlayer(p, push, attempt = 1) {
           if (!u || !u.text) continue;
           says.push(u);
           // the town is silent at night: night speech is recorded for margot but never queued
-          if (!push.night) state.queue.push({ id: ++state.seq, player: p.name, to: u.to || 'town', text: u.text, ts: Date.now() });
+          if (!push.night) {
+            const q = { id: ++state.seq, player: p.name, to: u.to || 'town', text: u.text, ts: Date.now(), file: null };
+            state.queue.push(q);
+            preSynth(q);
+          }
         }
         p.history.push({
           turn: push.turnN, phase: push.label, status: p.lastStatus,
@@ -258,38 +262,49 @@ function voiceFor(idx, p) {
   try { return JSON.parse(fs.readFileSync(path.join(ROOT, 'voices', 'mapping.json'), 'utf8'))[idx] || ''; }
   catch (e) { return ''; }
 }
-function synthAndPlay(voice, channel, text, done) {
-  const finish = () => { speakChild = null; done(); };
-  // playback: dedicated output channel on the mixer (UMC1820) when CT_AUDIO_DEVICE is set, else default output
-  const playFile = (file) => {
-    const py = path.join(ROOT, 'audio', 'venv', 'bin', 'python');
-    const pc = path.join(ROOT, 'audio', 'play_channel.py');
-    if (process.env.CT_AUDIO_DEVICE && fs.existsSync(pc)) {
-      speakChild = execFile(fs.existsSync(py) ? py : 'python3',
-        [pc, '--device', process.env.CT_AUDIO_DEVICE, '--channel', String(channel), '--rate', PLAY_RATE, file],
-        { timeout: 60000 }, (err) => {
-          if (err) { speakChild = execFile('afplay', ['-r', PLAY_RATE, file], { timeout: 60000 }, finish); return; }
-          finish();
-        });
-    } else {
-      speakChild = execFile('afplay', ['-r', PLAY_RATE, file], { timeout: 60000 }, finish);
-    }
-  };
-  const fallbackSay = () => {
-    const aiff = path.join(GAME, 'speech.aiff');
-    const args = voice ? ['-v', voice, '-o', aiff, text] : ['-o', aiff, text];
-    speakChild = execFile('say', args, { timeout: 60000 }, (err) => {
-      if (err) { speakChild = execFile('say', ['-o', aiff, text], { timeout: 60000 }, (e2) => e2 ? finish() : playFile(aiff)); return; }
-      playFile(aiff);
+// synthesize text to a file (kokoro/piper/say via synth.sh, macOS say as fallback). cb(err, file)
+function synthToFile(voice, text, outfile, cb) {
+  const sayTo = (useVoice) => {
+    const aiff = outfile.replace(/\.wav$/, '.aiff');
+    const args = useVoice ? ['-v', useVoice, '-o', aiff, text] : ['-o', aiff, text];
+    execFile('say', args, { timeout: 60000 }, (err) => {
+      if (err && useVoice) return sayTo('');
+      cb(err, aiff);
     });
   };
   if (fs.existsSync(SYNTH) && voice) {
-    const wav = path.join(GAME, 'speech.wav');
-    speakChild = execFile(SYNTH, [voice, wav, text], { timeout: 30000 }, (err) => {
-      if (err) { fallbackSay(); return; }
-      playFile(wav);
+    execFile(SYNTH, [voice, outfile, text], { timeout: 90000 }, (err) => {
+      if (err) return sayTo(voice);
+      cb(null, outfile);
     });
-  } else fallbackSay();
+  } else sayTo(voice);
+}
+
+// playback: dedicated output channel on the mixer (UMC1820) when CT_AUDIO_DEVICE is set, else default output
+function playFile(file, channel, done) {
+  const finish = () => { speakChild = null; done(); };
+  const py = path.join(ROOT, 'audio', 'venv', 'bin', 'python');
+  const pc = path.join(ROOT, 'audio', 'play_channel.py');
+  if (process.env.CT_AUDIO_DEVICE && fs.existsSync(pc)) {
+    speakChild = execFile(fs.existsSync(py) ? py : 'python3',
+      [pc, '--device', process.env.CT_AUDIO_DEVICE, '--channel', String(channel), '--rate', PLAY_RATE, file],
+      { timeout: 60000 }, (err) => {
+        if (err) { speakChild = execFile('afplay', ['-r', PLAY_RATE, file], { timeout: 60000 }, finish); return; }
+        finish();
+      });
+  } else {
+    speakChild = execFile('afplay', ['-r', PLAY_RATE, file], { timeout: 60000 }, finish);
+  }
+}
+
+// pre-synthesize a queued utterance so speak plays instantly, whatever the engine's latency
+function preSynth(q) {
+  const idx = state.players.findIndex(p => p.name === q.player);
+  if (idx < 0) return;
+  const out = path.join(GAME, `speech-${q.id}.wav`);
+  synthToFile(voiceFor(idx, state.players[idx]), q.text, out, (err, file) => {
+    if (!err) { q.file = file; save(); }
+  });
 }
 
 // night choosers pre-load their decision the instant night falls
@@ -371,10 +386,16 @@ const server = http.createServer(async (req, res) => {
     const idx = state.players.findIndex(p => p.name === q.player);
     const pl = state.players[idx] || {};
     state.speaking = { id: q.id, player: q.player }; save();
-    synthAndPlay(voiceFor(idx, pl), pl.channel || idx + 1, q.text, () => {
+    const onDone = () => {
       const wasStopped = !state.speaking || state.speaking.id !== q.id;
       state.speaking = null;
       if (!wasStopped) deliverQueued(q.id); else save();
+    };
+    const startPlayback = (file) => playFile(file, pl.channel || idx + 1, onDone);
+    if (q.file && fs.existsSync(q.file)) startPlayback(q.file);
+    else synthToFile(voiceFor(idx, pl), q.text, path.join(GAME, `speech-${q.id}.wav`), (err, file) => {
+      if (err) { state.speaking = null; save(); return; }
+      startPlayback(file);
     });
     return send(200, { ok: true });
   }
@@ -405,6 +426,7 @@ const server = http.createServer(async (req, res) => {
       };
     });
     state.humans = (b.humans || []).map((h, i) => ({ name: (h.name || '').trim(), mic: h.mic || i + 1 })).filter(h => h.name);
+    for (const f of fs.readdirSync(GAME)) if (/^speech-.*\.(wav|aiff)$/.test(f)) try { fs.unlinkSync(path.join(GAME, f)); } catch (e) {}
     state.queue = []; state.ctx = []; state.turnN = 0; state.seq = 0;
     state.phase = { time: 'night', day: 1 }; state.hadFirstDay = false; state.speaking = null;
     state.players.forEach(sysPromptPath);
