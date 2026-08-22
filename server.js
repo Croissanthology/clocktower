@@ -29,7 +29,7 @@ const NIGHT_CHOOSERS = {
 
 fs.mkdirSync(GAME, { recursive: true });
 
-let state = { players: [], queue: [], ctx: [], humans: [], phase: { time: 'night', day: 1 }, hadFirstDay: false, turnN: 0, seq: 0, speaking: null, paused: false };
+let state = { players: [], queue: [], ctx: [], humans: [], seats: [], phase: { time: 'night', day: 1 }, hadFirstDay: false, turnN: 0, seq: 0, speaking: null, paused: false };
 try {
   const disk = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
   state = Object.assign(state, disk);
@@ -46,6 +46,7 @@ try {
   }
   if (!state.humans) state.humans = [];
   if (state.paused === undefined) state.paused = false;
+  if (!state.seats) state.seats = state.players.map(p => p.name).concat(state.humans.map(h => h.name));
   if (state.hadFirstDay === undefined) state.hadFirstDay = true;
   for (const p of state.players) {
     if (p.ctxCursor === undefined) p.ctxCursor = state.ctx.length;
@@ -69,14 +70,24 @@ function roster() {
   return `AT THE TABLE — human players: ${humans || '(to be announced)'}. AI players: ${ais}.`;
 }
 
+function seatingFor(p) {
+  const seats = (state.seats || []).filter(Boolean);
+  const i = seats.indexOf(p.name);
+  if (i < 0 || seats.length < 3) return '(seating not set yet — ask margot if it matters to your ability)';
+  const rot = seats.slice(i).concat(seats.slice(0, i));
+  return `Clockwise around the table, starting from you: ${rot.join(' → ')} → back to you.\n` +
+    `Your immediate neighbors are ${rot[1]} (clockwise) and ${rot[rot.length - 1]} (counter-clockwise). ` +
+    `This is the real physical circle at the table; abilities that mention neighbors or adjacency use it.`;
+}
+
 function sysPromptPath(p) {
   const file = path.join(GAME, `sys-${p.name.replace(/[^\w-]/g, '_')}.md`);
   const rules = fs.existsSync(RULES_FILE) ? fs.readFileSync(RULES_FILE, 'utf8')
     : '(rules file missing — play by standard Trouble Brewing rules from your own knowledge)';
   const tpl = fs.readFileSync(TEMPLATE_FILE, 'utf8');
-  // shared prefix (template+roster+rules) is byte-identical across players (prompt cache); card last
+  // shared prefix (template+roster+rules) is byte-identical across players (prompt cache); card+seating last
   fs.writeFileSync(file, tpl.replace('{{ROSTER}}', roster()).replace('{{RULES}}', rules)
-    .replace(/{{NAME}}/g, p.name).replace('{{CARD}}', p.card));
+    .replace(/{{NAME}}/g, p.name).replace('{{CARD}}', p.card).replace('{{SEATING}}', seatingFor(p)));
   return file;
 }
 
@@ -126,14 +137,14 @@ function ctxSlice(p) {
   p.ctxCursor = state.ctx.length;
   return unseen.map(e => {
     if (e.kind === 'say') return `${e.player} (AI, aloud)${e.to && e.to !== 'town' ? ' to ' + e.to : ''}: ${e.text}`;
-    if (e.kind === 'note') return `margot (out-of-game, true): ${e.text}`;
-    if (e.kind === 'phase') return `— ${e.text} —`;
+    if (e.kind === 'note') return `MARGOT: ${e.text}`;
+    if (e.kind === 'phase') return `GAME: ${e.text}`;
     return e.text;
   }).join('\n');
 }
 
 function buildUserMessage(p, push) {
-  const head = push.night ? `--NIGHT-- ${push.label} · turn ${push.turnN} · the town is silent, eyes closed` : `--DAY-- ${push.label} · turn ${push.turnN}`;
+  const head = push.night ? `--NIGHT-- ${push.label} · tick ${push.turnN} · the town is silent, eyes closed` : `--DAY-- ${push.label} · tick ${push.turnN}`;
   const parts = [
     head,
     `reminder: you are ${p.name}, secretly the ${p.role} (${p.alignment}).`,
@@ -141,7 +152,7 @@ function buildUserMessage(p, push) {
   ];
   if (p.feedback) parts.push(`=== correction from last turn ===\n${p.feedback}`);
   if (push.ctxText) parts.push(`=== heard since your last turn (live mics + AI speakers; may contain transcription errors) ===\n${push.ctxText}`);
-  if (push.priv) parts.push(`=== PRIVATE — only you receive this ===\n${push.priv}`);
+  if (push.priv) parts.push(`=== MARGOT, PRIVATELY — only you receive this ===\n${push.priv}`);
   parts.push(`=== respond now with the JSON contract only ===`);
   return parts.join('\n\n');
 }
@@ -163,7 +174,8 @@ function callOpenrouter(model, sysText, userMsg, cb) {
       try {
         const j = JSON.parse(d);
         if (j.error) return cb(new Error('openrouter: ' + String(j.error.message || JSON.stringify(j.error)).slice(0, 200)), '');
-        cb(null, ((j.choices || [])[0]?.message?.content || '').trim());
+        const m = (j.choices || [])[0]?.message || {};
+        cb(null, (m.content || '').trim(), '', (m.reasoning || m.reasoning_content || '').trim());
       } catch (e) { cb(new Error('openrouter bad response: ' + d.slice(0, 200)), ''); }
     });
   });
@@ -172,19 +184,48 @@ function callOpenrouter(model, sysText, userMsg, cb) {
   req.write(bodyStr); req.end();
 }
 
-function callModel(p, msg, cb) { // cb(err, raw, stderr)
+// claude CLI stream-json → {text, thinking}. falls back to treating the blob as plain text.
+function parseStreamJson(stdout) {
+  let text = '', thinking = '', parsedAny = false;
+  for (const line of stdout.split('\n')) {
+    const l = line.trim();
+    if (!l.startsWith('{')) continue;
+    try {
+      const j = JSON.parse(l);
+      parsedAny = true;
+      if (j.type === 'assistant' && j.message && Array.isArray(j.message.content)) {
+        for (const b of j.message.content) {
+          if (b.type === 'thinking' && b.thinking) thinking += b.thinking + '\n';
+          if (b.type === 'text' && b.text) text += b.text;
+        }
+      }
+      if (j.type === 'result' && typeof j.result === 'string') text = j.result;
+    } catch (e) {}
+  }
+  if (!parsedAny) return { text: stdout, thinking: '' };
+  return { text: text.trim(), thinking: thinking.trim() };
+}
+
+function callModel(p, msg, cb) { // cb(err, raw, stderr, thinking)
   let model = p.model || MODEL;
-  // anthropic models always ride the claude subscription, never the openrouter key
-  if (model.startsWith('anthropic/')) model = model.split('/')[1].replace(/:.*$/, '');
+  // "or:" prefix forces the openrouter path (visible chain of thought, billed to the key) —
+  // otherwise anthropic models always ride the claude subscription, never the openrouter key
+  const forceOR = model.startsWith('or:');
+  if (forceOR) model = model.slice(3);
+  else if (model.startsWith('anthropic/')) model = model.split('/')[1].replace(/:.*$/, '');
   const sysFile = sysPromptPath(p);
   if (model.includes('/')) {
-    callOpenrouter(model, fs.readFileSync(sysFile, 'utf8'), msg, (err, raw) => cb(err, raw, ''));
+    callOpenrouter(model, fs.readFileSync(sysFile, 'utf8'), msg, cb);
     return null;
   }
   const args = ['-p', '--model', model, '--effort', EFFORT,
-    '--system-prompt-file', sysFile, '--no-session-persistence', '--disallowedTools', '*'];
-  const child = execFile('claude', args, { cwd: GAME, timeout: TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 },
-    (err, stdout, stderr) => cb(err, (stdout || '').trim(), stderr || ''));
+    '--system-prompt-file', sysFile, '--no-session-persistence', '--disallowedTools', '*',
+    '--output-format', 'stream-json', '--verbose'];
+  const child = execFile('claude', args, { cwd: GAME, timeout: TIMEOUT_MS, maxBuffer: 50 * 1024 * 1024 },
+    (err, stdout, stderr) => {
+      const { text, thinking } = parseStreamJson((stdout || '').trim());
+      cb(err, text, stderr || '', thinking);
+    });
   child.stdin.write(msg);
   child.stdin.end();
   return child;
@@ -195,9 +236,9 @@ function pushToPlayer(p, push, attempt = 1) {
   p.parseError = null;
   save();
   const msg = buildUserMessage(p, push);
-  callModel(p, msg, (err, raw, stderr) => {
+  callModel(p, msg, (err, raw, stderr, thinking) => {
       p.status = 'idle';
-      log(p.name, { push, raw, stderr: (stderr || '').slice(0, 2000), err: err ? String(err) : null });
+      log(p.name, { push, raw, thinking: thinking || '', stderr: (stderr || '').slice(0, 2000), err: err ? String(err) : null });
       if (err && !raw) {
         if (attempt < 2) { setTimeout(() => pushToPlayer(p, push, attempt + 1), 2000); return; }
         p.parseError = `claude call failed twice: ${String(err).slice(0, 300)}`; save(); return;
@@ -224,12 +265,13 @@ function pushToPlayer(p, push, attempt = 1) {
           turn: push.turnN, phase: push.label, status: p.lastStatus,
           say: says, sayHeld: push.night && says.length > 0,
           action: out.action || null, ask: (typeof out.ask === 'string' ? out.ask.trim() : ''),
-          edits: res.applied.length, editsFailed: res.failed.length, ts: Date.now(),
+          edits: res.applied.length, editsFailed: res.failed.length,
+          input: msg, thinking: thinking || '', ts: Date.now(),
         });
       } catch (e) {
         p.parseError = `${e.message} — raw kept in log; re-push or edit by hand`;
         p.lastStatus = raw.slice(0, 400);
-        p.history.push({ turn: push.turnN, phase: push.label, status: '(turn lost: bad JSON)', say: [], action: null, ask: '', edits: 0, editsFailed: 0, ts: Date.now() });
+        p.history.push({ turn: push.turnN, phase: push.label, status: '(tick lost: bad JSON)', say: [], action: null, ask: '', edits: 0, editsFailed: 0, input: msg, thinking: thinking || '', ts: Date.now() });
       }
       save();
     });
@@ -478,6 +520,7 @@ const server = http.createServer(async (req, res) => {
       };
     });
     state.humans = (b.humans || []).map((h, i) => ({ name: (h.name || '').trim(), mic: h.mic || i + 1 })).filter(h => h.name);
+    state.seats = (b.seats && b.seats.length) ? b.seats : state.players.map(p => p.name).concat(state.humans.map(h => h.name));
     for (const f of fs.readdirSync(GAME)) if (/^speech-.*\.(wav|aiff)$/.test(f)) try { fs.unlinkSync(path.join(GAME, f)); } catch (e) {}
     state.queue = []; state.ctx = []; state.turnN = 0; state.seq = 0;
     state.phase = { time: 'night', day: 1 }; state.hadFirstDay = false; state.speaking = null;
@@ -515,6 +558,17 @@ const server = http.createServer(async (req, res) => {
     if (b.field === 'actionSeen' && p.action) p.action.seen = true;
     if (b.field === 'askSeen') p.ask = null;
     save(); return send(200, { ok: true });
+  }
+  // reorder seats mid-game (people move chairs); system prompts pick it up on next push
+  if (req.method === 'POST' && url.pathname === '/api/seats') {
+    const b = await body(req);
+    if (Array.isArray(b.seats)) { state.seats = b.seats.filter(Boolean); state.players.forEach(sysPromptPath); save(); }
+    return send(200, { ok: true, seats: state.seats });
+  }
+  if (req.method === 'GET' && url.pathname.startsWith('/api/sys/')) {
+    const p = player(decodeURIComponent(url.pathname.slice('/api/sys/'.length)));
+    if (!p) return send(404, { err: 'no such player' });
+    return send(200, { sys: fs.readFileSync(sysPromptPath(p), 'utf8') });
   }
   // update the mic→name roster mid-game, no reset (system prompts pick it up on next push)
   if (req.method === 'POST' && url.pathname === '/api/humans') {

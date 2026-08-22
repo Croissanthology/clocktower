@@ -7,10 +7,10 @@
 <style>
   body { --bg:#131417; --panel:#1b1d22; --panel2:#22252c; --line:#2e323b;
     --ink:#e6e8ec; --dim:#8b909b; --pink:#f27ab0; --pinkbg:#38202e;
-    --ask:#e3c94e; --askbg:#332e17; --bad:#e08a8a; }
+    --ask:#e3c94e; --askbg:#332e17; --bad:#e08a8a; --marg:#b9a7f2; }
   body.day { --bg:#efece3; --panel:#faf8f1; --panel2:#f1ede1; --line:#d9d3c3;
     --ink:#28262f; --dim:#847e6e; --pink:#c2337f; --pinkbg:#fadfee;
-    --ask:#8f7a10; --askbg:#f5ecc6; --bad:#b04a4a; }
+    --ask:#8f7a10; --askbg:#f5ecc6; --bad:#b04a4a; --marg:#7a5fd0; }
   * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--ink);
          font:15px/1.45 -apple-system, system-ui, sans-serif; height:100vh; overflow:hidden;
@@ -36,6 +36,27 @@
   .mic-row .who { width:180px; }
   .mic-row .track { flex:1; height:10px; background:var(--panel2); border-radius:5px; overflow:hidden; }
   .mic-row .fill { height:100%; background:var(--good); border-radius:5px; transition:width .3s; }
+  /* transcript feed */
+  .feed { flex:1; overflow-y:auto; border:1px solid var(--line); border-radius:12px; background:var(--panel);
+          padding:16px 20px; font-size:14px; line-height:1.55; }
+  .feed pre { white-space:pre-wrap; font:12px/1.5 ui-monospace, Menlo, monospace; background:var(--panel2);
+              border-radius:8px; padding:10px; overflow-x:auto; margin:6px 0; }
+  .f-tick { margin:18px 0 6px; color:var(--dim); font-size:12px; letter-spacing:.08em; text-transform:uppercase;
+            border-bottom:1px solid var(--line); padding-bottom:3px; }
+  .f-line { white-space:pre-wrap; }
+  .f-margot { color:var(--marg); }
+  .f-game { color:var(--dim); font-style:italic; }
+  .f-head { color:var(--dim); font-size:12px; letter-spacing:.04em; margin-top:8px; }
+  .f-out { border-left:2px solid var(--c, var(--line)); padding-left:12px; margin:8px 0 4px; }
+  .f-pending { opacity:.38; }
+  .f-cot { font-size:11px; padding:0 6px; }
+  /* seating circle */
+  .circle-wrap { position:relative; width:340px; height:340px; margin:8px auto; }
+  .seat { position:absolute; width:74px; margin:-16px 0 0 -37px; text-align:center; cursor:pointer;
+          font-size:12px; padding:5px 2px; border-radius:8px; border:1.5px solid var(--line); background:var(--panel2);
+          overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .seat.ai { border-color:var(--c); color:var(--c); }
+  .seat.sel { outline:2px solid var(--ink); }
   textarea, input, select { font:inherit; background:var(--panel); color:var(--ink);
     border:1px solid var(--line); border-radius:8px; padding:9px 11px; width:100%; }
   textarea:focus, input:focus, select:focus { outline:none; border-color:var(--dim); }
@@ -140,6 +161,7 @@ function colorOf(name){ const i=S.players.findIndex(p=>p.name===name); return CO
 let S = { players:[], queue:[], ctx:[], humans:[], phase:{time:"night",day:1}, phaseLabel:"night 1", turnN:0, model:"sonnet", speaking:null };
 let view = { name:"home", ai:null };
 let ui = { priv:{}, buffer:"", auto:false, secs:45, speakingId:null, speakingPlayer:null, sheetDirty:{},
+  cotOpen:{}, seatNames:null, seatSel:null,
   humanCount: 8,
   humanNames: ["","","","","","","",""],
   setupRows:[
@@ -182,6 +204,7 @@ function nav(name, ai){
         <span class="role" style="color:${c}">${esc(p.name)}</span>
         <span style="color:var(--ink)">${esc(p.role)}</span>
         <span style="color:var(--dim)">${esc(p.model||S.model)}</span>
+        <button class="ghost" onclick="nav('feed','${esc(p.name)}')">transcript</button>
         <span class="dot" id="ai-dot"></span></div>
       <div class="st" id="ai-status"></div><div id="ai-extra"></div>
       <div class="cols">
@@ -222,6 +245,18 @@ function nav(name, ai){
     inp.value = ui.buffer; inp.focus();
     ui.streamLen = -1;
   }
+  if (name==="feed") {
+    const p = S.players.find(x=>x.name===view.ai); if(!p) return nav("home");
+    v.innerHTML = `<div class="full" style="--c:${colorOf(p.name)}">
+      <div class="hd"><button class="back" onclick="nav('ai','${esc(p.name)}')">&larr;</button>
+        <span class="role" style="color:${colorOf(p.name)}">${esc(p.name)}</span>
+        <span style="color:var(--dim)">every token, in order · gray = not read yet</span></div>
+      <div class="feed" id="feed-body"></div></div>`;
+    ui.feedSig = "";
+    if (!ui.sysCache) ui.sysCache = {};
+    api("/api/sys/"+encodeURIComponent(p.name)).then(r=>{ ui.sysCache[p.name]=r.sys||""; ui.feedSig=""; renderFeed(); });
+    renderFeed();
+  }
   if (name==="mics") {
     v.innerHTML = `<div class="full">
       <div class="hd"><button class="back" onclick="nav('home')">&larr;</button>
@@ -243,18 +278,64 @@ function nav(name, ai){
         ${[2,3,4,5,6,7,8,9,10].map(n=>`<option ${n===ui.humanCount?"selected":""}>${n}</option>`).join("")}</select> of them</h4>
       ${Array.from({length:ui.humanCount},(_,i)=>`<div class="hrow"><span class="mic">mic ${i+1}</span>
         <input value="${esc(ui.humanNames[i]||"")}" onchange="ui.humanNames[${i}]=this.value"></div>`).join("")}
+      <h4>seating — click two seats to swap (mirror the real table; clockwise)</h4>
+      <div class="circle-wrap" id="circle"></div>
       <div style="display:flex;gap:8px;margin-top:6px"><button class="on" style="flex:1;padding:10px" onclick="doSetup()">deal</button>
-        ${S.players.length?`<button onclick="saveMics()">save mics only</button><button onclick="nav('home')">cancel</button>`:""}</div>
+        ${S.players.length?`<button onclick="saveSeats()">save seats only</button><button onclick="saveMics()">save mics only</button><button onclick="nav('home')">cancel</button>`:""}</div>
       <div class="hint">dealing resets the game (starts at night 1). disk logs are kept.<br>
       model: sonnet / haiku / opus run on the claude subscription; anything with a slash (e.g. openai/gpt-5.1) runs via openrouter.</div>
       <datalist id="model-list"></datalist></div>`;
-    loadModels();
+    loadModels(); renderCircle();
   }
   update();
 }
 async function saveMics(){
   const humans = ui.humanNames.slice(0,ui.humanCount).map((n,i)=>({name:n, mic:i+1}));
   await api("/api/humans",{humans}); nav("home");
+}
+// mirror the server's player-naming so the circle shows names as they will be dealt
+function setupNames(){
+  const used={};
+  const ais = ui.setupRows.filter(r=>r.role).map(r=>{
+    const base=(r.model||"sonnet").split("/").pop();
+    used[base]=(used[base]||0)+1;
+    const auto = used[base]>1?`${base}-${used[base]}`:base;
+    return { name:(r.name||"").trim()||auto, ai:true };
+  });
+  const humans = ui.humanNames.slice(0,ui.humanCount).map(n=>({name:n.trim(),ai:false})).filter(x=>x.name);
+  return ais.concat(humans);
+}
+function renderCircle(){
+  const el = document.getElementById("circle"); if(!el) return;
+  const people = setupNames();
+  const names = people.map(x=>x.name);
+  // keep prior ordering for names that still exist; append newcomers
+  ui.seatNames = ((ui.seatNames && ui.seatNames.length ? ui.seatNames : (S.seats||[])).filter(n=>names.includes(n)))
+    .concat(names.filter(n=>!(ui.seatNames||S.seats||[]).includes(n)));
+  const n = ui.seatNames.length;
+  el.innerHTML = ui.seatNames.map((name,i)=>{
+    const a = -Math.PI/2 + (2*Math.PI*i)/Math.max(1,n);
+    const x = 170 + 140*Math.cos(a), y = 170 + 140*Math.sin(a);
+    const p = people.find(x=>x.name===name);
+    const aiIdx = p&&p.ai ? people.filter(x=>x.ai).findIndex(x=>x.name===name) : -1;
+    return `<div class="seat ${p&&p.ai?"ai":""} ${ui.seatSel===name?"sel":""}" title="${esc(name)}"
+      style="left:${x}px;top:${y}px;${aiIdx>=0?`--c:${COLORS[aiIdx%4]}`:""}"
+      onclick="seatClick('${esc(name)}')">${esc(name)}</div>`;
+  }).join("");
+}
+function seatClick(name){
+  if (!ui.seatSel) { ui.seatSel = name; }
+  else if (ui.seatSel === name) { ui.seatSel = null; }
+  else {
+    const a = ui.seatNames.indexOf(ui.seatSel), b = ui.seatNames.indexOf(name);
+    [ui.seatNames[a], ui.seatNames[b]] = [ui.seatNames[b], ui.seatNames[a]];
+    ui.seatSel = null;
+  }
+  renderCircle();
+}
+async function saveSeats(){
+  renderCircle();
+  await api("/api/seats",{seats:ui.seatNames}); nav("home");
 }
 function setHumanCount(n){ ui.humanCount=n; while(ui.humanNames.length<n) ui.humanNames.push(""); nav("setup"); }
 async function loadModels(){
@@ -316,6 +397,55 @@ function renderMics(){
     <div class="hint" style="margin-top:10px">green = speech in the last 3s · gray = open but quiet · red = transcriber not running. lines land in CONTEXT attributed by mic number → name.</div>`;
 }
 
+// ---------- transcript feed ----------
+function feedLines(text, extraCls){
+  return text.split("\n").map(l=>{
+    let cls = "f-line "+(extraCls||"");
+    if (/^MARGOT[,:]/.test(l) || /^=== MARGOT, PRIVATELY/.test(l)) cls += " f-margot";
+    else if (/^GAME:/.test(l)) cls += " f-game";
+    else if (/^===|^--NIGHT--|^--DAY--/.test(l)) cls += " f-head";
+    return `<div class="${cls}">${esc(l)||"&nbsp;"}</div>`;
+  }).join("");
+}
+function renderFeed(){
+  const el = document.getElementById("feed-body"); if(!el) return;
+  const p = S.players.find(x=>x.name===view.ai); if(!p) return;
+  const pending = S.ctx.slice(p.ctxCursor||0);
+  const sig = `${p.history.length}:${S.ctx.length}:${p.status}`;
+  if (sig === ui.feedSig) return;
+  ui.feedSig = sig;
+  const pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 80 || el.scrollTop===0;
+  let html = `<details><summary style="color:var(--dim);cursor:pointer">system prompt — briefing + rules + secret card + seat (start of every tick's context)</summary>
+    <pre>${esc(ui.sysCache?.[p.name]||"loading...")}</pre></details>`;
+  for (const h of p.history){
+    const key = p.name+":"+h.turn+":"+h.ts;
+    html += `<div class="f-tick">tick ${h.turn} · ${esc(h.phase)}</div>`;
+    if (h.input) html += feedLines(h.input);
+    html += `<div class="f-out">
+      <div style="color:var(--dim);font-size:12px">${esc(p.name)} responds
+        ${h.thinking?`<button class="ghost f-cot" onclick="ui.cotOpen['${key}']=!ui.cotOpen['${key}'];ui.feedSig='';renderFeed()">${ui.cotOpen[key]?"hide thought":"…"}</button>`:""}</div>
+      ${ui.cotOpen[key]&&h.thinking?`<pre>${esc(h.thinking)}</pre>`:""}
+      ${h.status?`<div style="color:var(--dim)">${esc(h.status)}</div>`:""}
+      ${h.say.map(s=>`<div>&ldquo;${esc(s.text)}&rdquo;${h.sayHeld?' <span style="color:var(--ask);font-size:12px">(held — night)</span>':""}</div>`).join("")}
+      ${h.action?`<div style="color:var(--pink)">${esc(h.action.type)} &rarr; ${esc(h.action.target||"")}</div>`:""}
+      ${h.ask?`<div style="color:var(--ask)">? ${esc(h.ask)}</div>`:""}
+      ${h.edits?`<div style="color:var(--dim);font-size:12px">${h.edits} sheet edit${h.edits>1?"s":""}${h.editsFailed?` · <span style="color:var(--bad)">${h.editsFailed} failed</span>`:""}</div>`:""}
+    </div>`;
+  }
+  if (pending.length){
+    html += `<div class="f-tick f-pending">not yet read — lands next tick</div>`;
+    html += pending.map(e=>{
+      let t = e.kind==="say" ? `${e.player} (AI, aloud)${e.to&&e.to!=="town"?" to "+e.to:""}: ${e.text}`
+            : e.kind==="note" ? `MARGOT: ${e.text}`
+            : e.kind==="phase" ? `GAME: ${e.text}` : e.text;
+      return feedLines(t, "f-pending");
+    }).join("");
+  }
+  el.innerHTML = html;
+  if (pinned) el.scrollTop = el.scrollHeight;
+}
+if (!window.__cotInit){ window.__cotInit=1; }
+
 // ---------- update ----------
 function moonSvg(){
   return S.phase.time==="night"
@@ -326,7 +456,7 @@ function update(){
   document.getElementById("top").innerHTML = `
     <button class="moon" onclick="togglePhase()" title="toggle day/night">${moonSvg()}</button>
     <span class="t">${esc(S.phaseLabel||"")}</span>
-    <span class="t" style="margin-left:14px">turn ${S.turnN}</span>
+    <span class="t" style="margin-left:14px">tick ${S.turnN}</span>
     <span style="flex:1"></span>
     ${micWidget()}
     <button class="pause ${S.paused?"paused":""}" onclick="togglePause()">${S.paused?"PAUSED — resume":"pause"}</button>
@@ -373,7 +503,7 @@ function update(){
     const sheet = document.getElementById("ai-sheet");
     if (document.activeElement!==sheet && ui.sheetDirty[p.name]==null && sheet.value!==p.sheet) sheet.value = p.sheet;
     document.getElementById("ai-hist").innerHTML = p.history.slice().reverse().map(h=>`
-      <div class="h-turn"><div class="h-meta">turn ${h.turn} · ${esc(h.phase)}${h.edits?` · ${h.edits} edits`:""}${h.editsFailed?` · <span style="color:var(--bad)">${h.editsFailed} failed</span>`:""}${h.sayHeld?` · <span style="color:var(--ask)">speech held (night)</span>`:""}</div>
+      <div class="h-turn"><div class="h-meta">tick ${h.turn} · ${esc(h.phase)}${h.edits?` · ${h.edits} edits`:""}${h.editsFailed?` · <span style="color:var(--bad)">${h.editsFailed} failed</span>`:""}${h.sayHeld?` · <span style="color:var(--ask)">speech held (night)</span>`:""}</div>
         ${esc(h.status)}${h.say.map(s=>`<div>&ldquo;${esc(s.text)}&rdquo;</div>`).join("")}
         ${h.ask?`<div style="color:var(--ask)">? ${esc(h.ask)}</div>`:""}
         ${h.action?`<div style="color:var(--pink)">${esc(h.action.type)} &rarr; ${esc(h.action.target||"")}</div>`:""}
@@ -381,6 +511,7 @@ function update(){
   }
 
   if (view.name==="mics") renderMics();
+  if (view.name==="feed") renderFeed();
 
   if (view.name==="ctx") {
     if (ui.streamLen !== S.ctx.length) {
@@ -402,8 +533,9 @@ function update(){
 async function doSetup(){
   const players = ui.setupRows.filter(r=>r.role).map(r=>({name:r.name, model:r.model, role:r.role, alignment:alignmentOf(r.role), persona:r.persona}));
   const humans = ui.humanNames.slice(0,ui.humanCount).map((n,i)=>({name:n, mic:i+1}));
-  await api("/api/setup",{players, humans});
-  ui.priv={}; ui.sheetDirty={}; ui.buffer="";
+  renderCircle();
+  await api("/api/setup",{players, humans, seats:ui.seatNames||[]});
+  ui.priv={}; ui.sheetDirty={}; ui.buffer=""; ui.cotOpen={};
   S = await api("/api/state"); nav("home");
 }
 function splitBuffer(){

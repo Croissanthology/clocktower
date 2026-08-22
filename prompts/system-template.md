@@ -70,3 +70,7 @@ Malformed JSON = your whole turn is lost and the table moves on without you. No 
 ## your secret card
 
 {{CARD}}
+
+## your seat
+
+{{SEATING}}
