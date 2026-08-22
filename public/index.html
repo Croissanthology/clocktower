@@ -25,6 +25,8 @@
   button.back:hover { color:var(--dim); }
   button.moon { background:none; border:none; padding:4px 8px; display:flex; align-items:center; }
   button.pause.paused { background:var(--bad); color:var(--bg); border-color:var(--bad); font-weight:700; }
+  button.pause.deny { animation:shake .5s; }
+  @keyframes shake { 20%,60% { transform:translateX(-4px); } 40%,80% { transform:translateX(4px); } }
   .micw { display:flex; align-items:flex-end; gap:2px; height:20px; padding:4px 10px; cursor:pointer;
           border:1px solid var(--line); border-radius:7px; background:var(--panel2); }
   .micw .bar { width:4px; background:var(--good); border-radius:1px; min-height:2px; transition:height .3s; }
@@ -184,8 +186,8 @@ function nav(name, ai){
       <div class="st" id="ai-status"></div><div id="ai-extra"></div>
       <div class="cols">
         <div class="col">
-          <textarea id="ai-priv" oninput="ui.priv['${esc(p.name)}']=this.value"></textarea>
-          <div style="display:flex;gap:8px"><button onclick="wakeNow('${esc(p.name)}')">wake now</button></div>
+          <textarea id="ai-priv" oninput="ui.priv['${esc(p.name)}']=this.value"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendPriv('${esc(p.name)}')}"></textarea>
           <h4 style="display:flex;gap:8px;align-items:center">sheet
             <button class="ghost" id="ai-sheet-save" style="display:none" onclick="saveSheet('${esc(p.name)}')">save</button></h4>
           <textarea id="ai-sheet" oninput="ui.sheetDirty['${esc(p.name)}']=this.value; document.getElementById('ai-sheet-save').style.display='inline'"></textarea>
@@ -410,18 +412,25 @@ function splitBuffer(){
            note: lines.filter(l=>l.startsWith("!")).map(l=>l.slice(1).trim()).join("\n") };
 }
 async function doPush(){
-  if (S.paused) return;
+  if (S.paused) { shakePause(); return; }
   const {town,note} = splitBuffer();
   await api("/api/push",{targets:S.players.map(p=>p.name), town, note, private:ui.priv});
   ui.buffer=""; ui.priv={};
   for (const id of ["ctx-input","ping","ai-priv"]) { const el=document.getElementById(id); if(el) el.value=""; }
   S = await api("/api/state"); update();
 }
-async function wakeNow(name){
-  await api("/api/push",{targets:[name], town:"", note:"", private:{[name]:ui.priv[name]||""}});
+// enter in a player's private box: inject to that AI immediately, even while paused
+async function sendPriv(name){
+  const text = ui.priv[name]||"";
+  if (!text.trim()) return;
+  await api("/api/push",{targets:[name], town:"", note:"", private:{[name]:text}, force:true});
   delete ui.priv[name];
   const pv=document.getElementById("ai-priv"); if(pv && view.ai===name) pv.value="";
   S = await api("/api/state"); update();
+}
+function shakePause(){
+  const b=document.querySelector("button.pause"); if(!b) return;
+  b.classList.add("deny"); setTimeout(()=>b.classList.remove("deny"), 600);
 }
 async function saveSheet(name){
   await api("/api/edit",{player:name, field:"sheet", value:ui.sheetDirty[name]??""});

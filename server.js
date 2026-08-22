@@ -235,8 +235,8 @@ function pushToPlayer(p, push, attempt = 1) {
     });
 }
 
-function doPushTargets(targets, priv) {
-  if (state.paused || !targets.length) return [];
+function doPushTargets(targets, priv, force) {
+  if ((state.paused && !force) || !targets.length) return [];
   state.turnN++;
   const base = { turnN: state.turnN, night: state.phase.time === 'night', label: phaseLabel() };
   for (const p of targets) pushToPlayer(p, { ...base, ctxText: ctxSlice(p), priv: priv[p.name] || '' });
@@ -280,6 +280,8 @@ function micStart(device, channels) {
 }
 function micStop() {
   if (micProc) try { micProc.kill('SIGTERM'); } catch (e) {}
+  // also catch transcribers this server process doesn't own (orphans from a restart, terminal runs)
+  execFile('pkill', ['-f', 'audio/transcribe.py'], () => {});
   mics.running = false;
 }
 function voiceFor(idx, p) {
@@ -340,7 +342,7 @@ function pushNightChoosers() {
   });
   const priv = {};
   for (const p of choosers) {
-    priv[p.name] = `night ${nightN()} has fallen. decide your night action NOW so it is ready the instant the storyteller wakes you: ${NIGHT_CHOOSERS[p.role].prompt} margot will flash your decision to the storyteller when your turn comes, and will type back anything you learn.`;
+    priv[p.name] = `night ${nightN()} has fallen. decide your night action NOW so it is ready the instant the storyteller wakes you: ${NIGHT_CHOOSERS[p.role].prompt} margot will silently show your decision to the storyteller when your turn comes. anything you learn in return may only reach you at dawn — margot avoids typing at night so as not to leak information to the table. wait patiently; it will come.`;
   }
   doPushTargets(choosers, priv);
 }
@@ -380,7 +382,8 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'POST' && url.pathname === '/api/miclevels') {
     const b = await body(req);
-    Object.assign(mics, { levels: b.levels || [], speech_ago: b.speech_ago || [], channels: b.channels || mics.channels, device: b.device || mics.device, ts: Date.now() });
+    // any transcriber posting levels counts as running (server-spawned, terminal-run, or orphaned)
+    Object.assign(mics, { running: true, levels: b.levels || [], speech_ago: b.speech_ago || [], channels: b.channels || mics.channels, device: b.device || mics.device, ts: Date.now() });
     return send(200, { ok: true });
   }
   if (req.method === 'POST' && url.pathname === '/api/mic/start') {
@@ -492,7 +495,7 @@ const server = http.createServer(async (req, res) => {
     const priv = typeof b.private === 'string'
       ? Object.fromEntries(targets.map(p => [p.name, b.private]))
       : (b.private || {});
-    const pushed = doPushTargets(targets, priv);
+    const pushed = doPushTargets(targets, priv, !!b.force);
     return send(202, { pushed, turn: state.turnN });
   }
   if (req.method === 'POST' && url.pathname === '/api/queue') {
