@@ -464,6 +464,13 @@ const server = http.createServer(async (req, res) => {
     if (b.field === 'askSeen') p.ask = null;
     save(); return send(200, { ok: true });
   }
+  // update the mic→name roster mid-game, no reset (system prompts pick it up on next push)
+  if (req.method === 'POST' && url.pathname === '/api/humans') {
+    const b = await body(req);
+    state.humans = (b.humans || []).map((h, i) => ({ name: (h.name || '').trim(), mic: h.mic || i + 1 })).filter(h => h.name);
+    state.players.forEach(sysPromptPath);
+    save(); return send(200, { ok: true, humans: state.humans });
+  }
   if (req.method === 'POST' && url.pathname === '/api/pause') {
     const b = await body(req);
     state.paused = b.paused !== undefined ? !!b.paused : !state.paused;

@@ -226,13 +226,17 @@ function nav(name, ai){
       ${Array.from({length:ui.humanCount},(_,i)=>`<div class="hrow"><span class="mic">mic ${i+1}</span>
         <input value="${esc(ui.humanNames[i]||"")}" onchange="ui.humanNames[${i}]=this.value"></div>`).join("")}
       <div style="display:flex;gap:8px;margin-top:6px"><button class="on" style="flex:1;padding:10px" onclick="doSetup()">deal</button>
-        ${S.players.length?`<button onclick="nav('home')">cancel</button>`:""}</div>
+        ${S.players.length?`<button onclick="saveMics()">save mics only</button><button onclick="nav('home')">cancel</button>`:""}</div>
       <div class="hint">dealing resets the game (starts at night 1). disk logs are kept.<br>
       model: sonnet / haiku / opus run on the claude subscription; anything with a slash (e.g. openai/gpt-5.1) runs via openrouter.</div>
       <datalist id="model-list"></datalist></div>`;
     loadModels();
   }
   update();
+}
+async function saveMics(){
+  const humans = ui.humanNames.slice(0,ui.humanCount).map((n,i)=>({name:n, mic:i+1}));
+  await api("/api/humans",{humans}); nav("home");
 }
 function setHumanCount(n){ ui.humanCount=n; while(ui.humanNames.length<n) ui.humanNames.push(""); nav("setup"); }
 async function loadModels(){
