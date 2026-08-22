@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 4141;
 const MODEL = process.env.CT_MODEL || 'sonnet';
 const EFFORT = process.env.CT_EFFORT || 'medium'; // thinking on by default, both backends
 const TIMEOUT_MS = 120000;
-const PLAY_RATE = '1.1';
+const PLAY_RATE = process.env.CT_RATE || '1.2';
 
 // TB roles that CHOOSE at night (info roles just receive). firstNight: acts on night 1 too.
 const NIGHT_CHOOSERS = {
@@ -342,6 +342,9 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/hear') {
     const b = await body(req);
     const t = String(b.text || '').trim();
+    // echo guard: while an AI is speaking, table mics mostly pick up the AI's own speaker —
+    // that text is already in context via delivery, so drop it instead of double-hearing it
+    if (state.speaking && process.env.CT_ECHO_GUARD !== '0') return send(200, { ok: true, dropped: 'ai-speaking' });
     if (t) {
       const h = state.humans.find(x => x.mic == b.mic);
       ctxAppend({ kind: 'town', text: `${h && h.name ? h.name : 'mic ' + b.mic}: ${t}` });
