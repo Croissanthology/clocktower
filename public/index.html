@@ -51,11 +51,21 @@
   .f-pending { opacity:.38; }
   .f-cot { font-size:11px; padding:0 6px; }
   /* seating */
-  .bench { display:flex; flex-wrap:wrap; gap:6px; justify-content:center; min-height:32px; flex-shrink:0; }
   .chip-p { border:1.5px solid var(--c, var(--ink)); color:var(--c, var(--ink)); border-radius:999px;
-            padding:3px 11px; font-size:12px; cursor:pointer; background:var(--panel2); }
+            padding:4px 11px; font-size:12px; cursor:pointer; background:var(--panel2); }
   .chip-p:hover { background:var(--panel); }
-  .bench.armed .chip-p { animation:pulse 1.2s infinite; }
+  .setup .row { position:relative; }
+  .setup .row.off { opacity:.38; filter:grayscale(.7); cursor:pointer; }
+  .setup .row.off * { pointer-events:none; }
+  .rowx { position:absolute; right:-26px; top:4px; color:var(--dim); background:none; border:none;
+          cursor:pointer; font-size:15px; padding:2px 6px; }
+  .rowx:hover { color:var(--bad); }
+  .seat-menu { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+               display:flex; flex-direction:column; gap:5px; background:var(--panel);
+               border:1px solid var(--line); border-radius:12px; padding:9px; z-index:5;
+               max-height:290px; overflow-y:auto; min-width:150px; box-shadow:0 6px 30px rgba(0,0,0,.35); }
+  .seat-menu .chip-p { text-align:center; }
+  .seat-menu .unseat { border-color:var(--line); color:var(--dim); }
   .circle-wrap { position:relative; width:430px; height:390px; margin:4px auto; flex-shrink:0; }
   .ring { position:absolute; left:75px; top:60px; right:75px; bottom:60px;
           border:1.5px dashed var(--line); border-radius:50%; }
@@ -173,10 +183,10 @@ let ui = { priv:{}, buffer:"", auto:false, secs:45, speakingId:null, speakingPla
   humanCount: 8,
   humanNames: ["","","","","","","",""],
   setupRows:[
-    {name:"Alligator", model:"fable", role:"empath", persona:ALLIGATOR_PERSONA},
-    {name:"", model:"google/gemini-3.1-pro-preview", role:"fortune teller", persona:""},
-    {name:"", model:"openai/gpt-5.6-sol", role:"imp", persona:""},
-    {name:"", model:"moonshotai/kimi-k3", role:"soldier", persona:""},
+    {on:false, name:"Alligator", model:"fable", role:"empath", persona:ALLIGATOR_PERSONA},
+    {on:false, name:"", model:"google/gemini-3.1-pro-preview", role:"fortune teller", persona:""},
+    {on:false, name:"", model:"openai/gpt-5.6-sol", role:"imp", persona:""},
+    {on:false, name:"", model:"moonshotai/kimi-k3", role:"soldier", persona:""},
   ]};
 
 async function api(p,d){ const r=await fetch(p,{method:d?"POST":"GET",headers:{"Content-Type":"application/json"},body:d?JSON.stringify(d):undefined}); return r.json(); }
@@ -273,22 +283,38 @@ function nav(name, ai){
     loadInputs(); renderMics();
   }
   if (name==="setup") {
+    // a running game populates setup once, so its rows/humans/seats reflect reality
+    if (S.players.length && !ui.setupSynced){
+      ui.setupSynced = true;
+      const oldRows = ui.setupRows;
+      ui.setupRows = S.players.map(p=>{
+        const prev = oldRows.find(r=>(r.name||"").trim()===p.name || r.model===p.model);
+        return {on:true, name:p.name, model:p.model, role:p.role, persona:prev?prev.persona:""};
+      });
+      while (ui.setupRows.length<4) ui.setupRows.push({on:false, name:"", model:"", role:"empath", persona:""});
+      if (S.humans.length){
+        ui.humanCount = Math.max(S.humans.length, 2);
+        ui.humanNames = Array.from({length:Math.max(8,S.humans.length)},(_,i)=>{
+          const h=S.humans.find(x=>x.mic===i+1); return h?h.name:""; });
+      }
+    }
     const opts = r=>Object.entries(ROLES).map(([g,rs])=>`<optgroup label="${g}">${rs.map(x=>`<option ${x===r?"selected":""}>${x}</option>`).join("")}</optgroup>`).join("");
     v.innerHTML = `<div class="setup">
       <h4>ai players</h4>
-      ${ui.setupRows.map((r,i)=>`<div class="row" style="border-left:3px solid ${COLORS[i]};padding-left:10px">
+      ${ui.setupRows.map((r,i)=>`<div class="row ${r.on?"":"off"}" style="border-left:3px solid ${COLORS[i]};padding-left:10px"
+        ${r.on?"":`onclick="ui.setupRows[${i}].on=true;nav('setup')" title="click to add this AI to the game"`}>
         <input value="${esc(r.name)}" placeholder="name (blank = model name)" onchange="ui.setupRows[${i}].name=this.value;renderSeating()">
         <input list="model-list" value="${esc(r.model)}" placeholder="model" onchange="ui.setupRows[${i}].model=this.value;renderSeating()">
         <select onchange="ui.setupRows[${i}].role=this.value;renderSeating()">${opts(r.role)}</select>
         <input class="persona" value="${esc(r.persona)}" onchange="ui.setupRows[${i}].persona=this.value" placeholder="persona (optional)">
+        ${r.on?`<button class="rowx" title="remove from game" onclick="event.stopPropagation();ui.setupRows[${i}].on=false;nav('setup')">&times;</button>`:""}
       </div>`).join("")}
       <h4>human players — <select style="width:64px;display:inline-block" onchange="setHumanCount(+this.value)">
         ${[2,3,4,5,6,7,8,9,10].map(n=>`<option ${n===ui.humanCount?"selected":""}>${n}</option>`).join("")}</select> of them</h4>
       ${Array.from({length:ui.humanCount},(_,i)=>`<div class="hrow"><span class="mic">mic ${i+1}</span>
         <input value="${esc(ui.humanNames[i]||"")}" onchange="ui.humanNames[${i}]=this.value;renderSeating()"></div>`).join("")}
-      <h4>seating — click a seat, then a player · click a seated player to unseat</h4>
-      <div class="bench" id="bench"></div>
-      <div class="circle-wrap" id="circle"></div>
+      <h4>seating — click a seat to choose who sits there</h4>
+      <div class="circle-wrap" id="circle" onclick="if(event.target.id==='circle'||event.target.classList.contains('ring')){ui.seatMenu=null;renderSeating()}"></div>
       <div style="display:flex;gap:8px;margin-top:6px"><button class="on" style="flex:1;padding:10px" onclick="doSetup()">deal</button>
         ${S.players.length?`<button onclick="saveSeats()">save seats only</button><button onclick="saveMics()">save mics only</button><button onclick="nav('home')">cancel</button>`:""}</div>
       <div class="hint">dealing resets the game (starts at night 1). disk logs are kept.<br>
@@ -305,7 +331,7 @@ async function saveMics(){
 // mirror the server's player-naming so the circle shows names as they will be dealt
 function setupNames(){
   const used={};
-  const ais = ui.setupRows.filter(r=>r.role).map(r=>{
+  const ais = ui.setupRows.filter(r=>r.on && r.role).map(r=>{
     const base=(r.model||"sonnet").split("/").pop();
     used[base]=(used[base]||0)+1;
     const auto = used[base]>1?`${base}-${used[base]}`:base;
@@ -335,37 +361,40 @@ function colorOfSetup(name, people){
   return p.ai ? COLORS[people.filter(x=>x.ai).findIndex(x=>x.name===name)%4] : "var(--ink)";
 }
 function renderSeating(){
-  const bench = document.getElementById("bench");
   const circle = document.getElementById("circle");
-  if (!bench || !circle) return;
+  if (!circle) return;
   const people = reconcileSeats();
-  const unplaced = people.filter(p=>!ui.seatAssign.includes(p.name));
-  bench.className = "bench" + (ui.seatSel!=null || unplaced.length ? "" : "") ;
-  bench.innerHTML = unplaced.length
-    ? unplaced.map(p=>`<span class="chip-p" style="--c:${colorOfSetup(p.name,people)}" onclick="benchClick('${esc(p.name)}')">${esc(p.name)}</span>`).join("")
-    : `<span style="color:var(--dim);font-size:12px;align-self:center">${people.length?"everyone is seated":"name players above and they appear here"}</span>`;
-  const n = ui.seatAssign.length;
-  circle.innerHTML = `<div class="ring"></div>` + ui.seatAssign.map((name,i)=>{
-    const a = -Math.PI/2 + (2*Math.PI*i)/Math.max(1,n);
+  const n = Math.max(1, ui.seatAssign.length);   // zero players: one lone empty seat
+  if (ui.seatMenu!=null && ui.seatMenu >= ui.seatAssign.length) ui.seatMenu = null;
+  const seats = (ui.seatAssign.length ? ui.seatAssign : [null]).map((name,i)=>{
+    const a = -Math.PI/2 + (2*Math.PI*i)/n;
     const x = 215 + 150*Math.cos(a), y = 190 + 145*Math.sin(a);
     const c = name ? colorOfSetup(name, people) : null;
-    return `<div class="seat ${name?"filled":""} ${ui.seatSel===i?"sel":""}" title="seat ${i+1}"
+    return `<div class="seat ${name?"filled":""} ${ui.seatMenu===i?"sel":""}"
       style="left:${x}px;top:${y}px;${c?`--c:${c}`:""}"
-      onclick="seatClick(${i})">${name?esc(name):i+1}</div>`;
+      onclick="event.stopPropagation();seatClick(${i})">${name?esc(name):"&nbsp;"}</div>`;
   }).join("");
+  let menu = "";
+  if (ui.seatMenu!=null){
+    const i = ui.seatMenu;
+    const unplaced = people.filter(p=>!ui.seatAssign.includes(p.name));
+    const items =
+      (ui.seatAssign[i]?`<span class="chip-p unseat" onclick="event.stopPropagation();ui.seatAssign[${i}]=null;ui.seatMenu=null;renderSeating()">unseat ${esc(ui.seatAssign[i])}</span>`:"") +
+      unplaced.map(p=>`<span class="chip-p" style="--c:${colorOfSetup(p.name,people)}"
+        onclick="event.stopPropagation();placeAt(${i},'${esc(p.name)}')">${esc(p.name)}</span>`).join("");
+    menu = `<div class="seat-menu">${items || `<span style="color:var(--dim);font-size:12px">no one left to seat</span>`}</div>`;
+  }
+  circle.innerHTML = `<div class="ring"></div>` + seats + menu;
 }
 function seatClick(i){
-  if (ui.seatAssign[i]) { ui.seatAssign[i]=null; ui.seatSel=i; }       // unseat back to bench, keep seat armed
-  else ui.seatSel = (ui.seatSel===i ? null : i);
+  if (!ui.seatAssign.length) return;             // the lone placeholder seat isn't assignable yet
+  ui.seatMenu = (ui.seatMenu===i ? null : i);
   renderSeating();
 }
-function benchClick(name){
-  let i = ui.seatSel;
-  if (i==null || ui.seatAssign[i]) i = ui.seatAssign.indexOf(null);    // no seat armed: first empty
-  if (i<0 || i==null) return;
-  ui.seatAssign[i]=name;
-  const next = ui.seatAssign.indexOf(null);                            // advance to next empty seat
-  ui.seatSel = next>=0 ? next : null;
+function placeAt(i, name){
+  ui.seatAssign[i] = name;
+  const next = ui.seatAssign.indexOf(null);      // flow to the next empty seat's menu
+  ui.seatMenu = next>=0 ? next : null;
   renderSeating();
 }
 function finalSeats(){
@@ -571,7 +600,8 @@ function update(){
 
 // ---------- actions ----------
 async function doSetup(){
-  const players = ui.setupRows.filter(r=>r.role).map(r=>({name:r.name, model:r.model, role:r.role, alignment:alignmentOf(r.role), persona:r.persona}));
+  const players = ui.setupRows.filter(r=>r.on && r.role).map(r=>({name:r.name, model:r.model, role:r.role, alignment:alignmentOf(r.role), persona:r.persona}));
+  if (!players.length && !ui.humanNames.slice(0,ui.humanCount).some(n=>n.trim())) return;
   const humans = ui.humanNames.slice(0,ui.humanCount).map((n,i)=>({name:n, mic:i+1}));
   await api("/api/setup",{players, humans, seats:finalSeats()});
   ui.priv={}; ui.sheetDirty={}; ui.buffer=""; ui.cotOpen={};
