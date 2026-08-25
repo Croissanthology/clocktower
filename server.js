@@ -324,7 +324,8 @@ function micStart(device, channels) {
   mics = { running: true, device, channels, levels: [], speech_ago: [], ts: 0, err: '' };
   let errTail = '';
   micProc = execFile(AUDIO_PY, [path.join(ROOT, 'audio', 'transcribe.py'),
-    '--device', device, '--channels', String(channels), '--server', `http://localhost:${PORT}`],
+    '--device', device, '--channels', String(channels), '--server', `http://localhost:${PORT}`,
+    '--threshold', process.env.CT_MIC_THRESHOLD || '0.02'],
     { maxBuffer: 50 * 1024 * 1024 }, (err) => {
       micProc = null;
       mics.running = false;

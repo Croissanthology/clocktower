@@ -190,7 +190,15 @@ def transcribe_faster(audio_16k, lang, model_size):
     return " ".join(seg.text for seg in segments).strip()
 
 
+def normalize(x, target_peak=0.7):
+    # quiet-but-clean mics (e.g. lavs at low preamp gain) transcribe far better at a healthy level
+    peak = float(np.abs(x).max()) if x.size else 0.0
+    if peak <= 0: return x
+    return (x * min(target_peak / peak, 200.0)).astype(np.float32)
+
+
 def transcribe_channel(audio_16k, lang, model_ref):
+    audio_16k = normalize(audio_16k)
     if ENGINE == "mlx":
         return transcribe_mlx(audio_16k, lang, model_ref)
     elif ENGINE == "faster-whisper":
