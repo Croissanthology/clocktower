@@ -29,6 +29,7 @@ from math import gcd
 
 import numpy as np
 import difflib
+import os
 import sounddevice as sd
 
 try:
@@ -164,6 +165,12 @@ def is_hallucination(text):
     words = t.split()
     if len(words) >= 4 and len(set(words)) == 1:
         return True  # e.g. "you you you you"
+    letters = [c for c in t if c.isalpha()]
+    if len(letters) >= 8:
+        if len(set(letters)) / len(letters) < 0.2:
+            return True  # one glyph repeated
+        if sum(1 for c in letters if c.isascii()) / len(letters) < 0.5:
+            return True  # non-latin script — not this table
     return False
 
 
@@ -226,7 +233,7 @@ def main():
     ap.add_argument("--device", help="input device name (substring) or index")
     ap.add_argument("--channels", type=int, default=1, help="requested channel count (clamped to device max)")
     ap.add_argument("--server", default="http://localhost:4141", help="game server base URL")
-    ap.add_argument("--lang", default="auto", help="language code, or 'auto' to detect per chunk")
+    ap.add_argument("--lang", default=os.environ.get("CT_MIC_LANG", "en"), help="language code, or 'auto' to detect per chunk")
     ap.add_argument("--threshold", type=float, default=0.02, help="RMS silence threshold, 0..1 (default 0.02)")
     ap.add_argument("--dominance", type=float, default=0.4, help="only transcribe channels >= this fraction of the loudest channel's level per chunk (crosstalk gate, 0 = off)")
     ap.add_argument("--chunk-seconds", type=float, default=5.0, help="chunk window length in seconds")
