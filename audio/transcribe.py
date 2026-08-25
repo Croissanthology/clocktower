@@ -28,6 +28,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from math import gcd
 
 import numpy as np
+import difflib
 import sounddevice as sd
 
 try:
@@ -358,7 +359,7 @@ def main():
         kept = []
         for ch, level, text in sorted(results, key=lambda r: -r[1]):
             key = "".join(c for c in text.lower() if c.isalnum())
-            if any(key == k or (len(key) > 12 and (key in k or k in key)) for k in seen):
+            if any(key == k or (len(key) > 12 and (key in k or k in key)) or difflib.SequenceMatcher(None, key, k).ratio() >= 0.75 for k in seen):
                 print(f"  channel {ch + 1}: [dropped duplicate/bleed] '{text[:60]}'")
                 continue
             seen.append(key)
