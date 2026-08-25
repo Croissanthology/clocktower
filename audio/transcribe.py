@@ -227,6 +227,7 @@ def main():
     ap.add_argument("--server", default="http://localhost:4141", help="game server base URL")
     ap.add_argument("--lang", default="auto", help="language code, or 'auto' to detect per chunk")
     ap.add_argument("--threshold", type=float, default=0.02, help="RMS silence threshold, 0..1 (default 0.02)")
+    ap.add_argument("--dominance", type=float, default=0.4, help="only transcribe channels >= this fraction of the loudest channel's level per chunk (crosstalk gate, 0 = off)")
     ap.add_argument("--chunk-seconds", type=float, default=5.0, help="chunk window length in seconds")
     ap.add_argument("--model", default="small", choices=sorted(MODEL_MAP_MLX.keys()), help="whisper model size")
     ap.add_argument("--dry-run", action="store_true", help="never POST, just print what would be sent")
@@ -321,9 +322,12 @@ def main():
     def handle_chunk(chunk, chunk_idx):
         t_start = time.time()
         active = []
-        for ch in range(n_channels):
-            level = rms(chunk[:, ch])
-            if level >= args.threshold:
+        levels_now = [rms(chunk[:, ch]) for ch in range(n_channels)]
+        loudest = max(levels_now) if levels_now else 0.0
+        for ch, level in enumerate(levels_now):
+            # crosstalk gate: a speaker's own lav is far louder than the bleed into neighbours' mics,
+            # so only channels within DOMINANCE of the loudest channel this chunk are transcribed
+            if level >= args.threshold and level >= loudest * args.dominance:
                 active.append((ch, level))
 
         if not active:
@@ -349,7 +353,17 @@ def main():
         active_str = ",".join(f"ch{ch + 1}(rms={level:.3f})" for ch, level in active)
         print(f"chunk {chunk_idx}: active=[{active_str}] latency={latency:.2f}s")
 
-        for ch, level, text in sorted(results):
+        # dedupe near-identical texts across channels (bleed): keep the loudest channel's copy
+        seen = []
+        kept = []
+        for ch, level, text in sorted(results, key=lambda r: -r[1]):
+            key = "".join(c for c in text.lower() if c.isalnum())
+            if any(key == k or (len(key) > 12 and (key in k or k in key)) for k in seen):
+                print(f"  channel {ch + 1}: [dropped duplicate/bleed] '{text[:60]}'")
+                continue
+            seen.append(key)
+            kept.append((ch, level, text))
+        for ch, level, text in sorted(kept):
             if is_hallucination(text):
                 print(f"  channel {ch + 1}: [filtered hallucination] '{text}'")
                 continue
