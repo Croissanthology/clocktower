@@ -466,6 +466,14 @@ function renderMics(){
     ${starting?`<div style="color:var(--dim);margin-bottom:10px">starting — whisper warming up...</div>`:""}
     ${S.mics && S.mics.err?`<div class="err" style="margin-bottom:10px">${esc(S.mics.err)}</div>`:""}
     <div style="border:1px solid var(--line);border-radius:10px;background:var(--panel)">${rows}</div>
+    <h4 style="margin:18px 0 8px">speakers</h4>
+    <div style="border:1px solid var(--line);border-radius:10px;background:var(--panel)">${S.players.map((p,i)=>`<div class="mic-row">
+      <span class="mdot" style="background:${COLORS[i%COLORS.length]}"></span>
+      <span class="who">${esc(p.name)}</span>
+      <span style="color:var(--dim);font-size:12px">out</span>
+      <input type="number" min="1" max="12" value="${p.channel||i+1}" style="width:60px" onchange="api('/api/edit',{name:${JSON.stringify(p.name)},channel:+this.value})">
+      <button onclick="api('/api/speak/test',{player:${JSON.stringify(p.name)}})">test</button>
+    </div>`).join("")}</div>
     <div class="hint" style="margin-top:10px">green = speech in the last 3s · gray = open but quiet · red = transcriber not running. lines land in CONTEXT attributed by mic number → name.</div>`;
 }
 

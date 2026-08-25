@@ -316,16 +316,28 @@ let modelsCache = { ts: 0, list: [] };
 // --- mic monitoring: the server owns the transcriber process ---
 const AUDIO_PY = path.join(ROOT, 'audio', 'venv', 'bin', 'python');
 let micProc = null;
+let speakEndedAt = 0; // echo guard tail: room reverb + chunk boundary after an AI stops speaking
 let mics = { running: false, device: '', channels: 0, levels: [], speech_ago: [], ts: 0, err: '' };
 let inputsCache = { ts: 0, list: [] };
 
+function micVocab() {
+  const names = new Set(['Margot', 'Adam', 'Storyteller']);
+  for (const p of state.players) names.add(p.name);
+  for (const h of state.humans) if (h.name) names.add(h.name);
+  const roles = [];
+  try {
+    const rules = fs.readFileSync(path.join(ROOT, 'rules', 'trouble-brewing.md'), 'utf8');
+    for (const m of rules.matchAll(/^\*\*([A-Z][A-Za-z ]+)\*\*/gm)) roles.push(m[1]);
+  } catch (e) {}
+  return `Blood on the Clocktower at ratcamp. Players: ${[...names].join(', ')}. Roles: ${roles.join(', ')}. Nominate, execute, the Demon, the Imp, good, evil, ghost vote.`;
+}
 function micStart(device, channels) {
   if (micProc) return;
   mics = { running: true, device, channels, levels: [], speech_ago: [], ts: 0, err: '' };
   let errTail = '';
   micProc = execFile(AUDIO_PY, [path.join(ROOT, 'audio', 'transcribe.py'),
     '--device', device, '--channels', String(channels), '--server', `http://localhost:${PORT}`,
-    '--threshold', process.env.CT_MIC_THRESHOLD || '0.02'],
+    '--threshold', process.env.CT_MIC_THRESHOLD || '0.02', '--prompt', micVocab()],
     { maxBuffer: 50 * 1024 * 1024 }, (err) => {
       micProc = null;
       mics.running = false;
@@ -467,7 +479,7 @@ const server = http.createServer(async (req, res) => {
     const t = String(b.text || '').trim();
     // echo guard: while an AI is speaking, table mics mostly pick up the AI's own speaker —
     // that text is already in context via delivery, so drop it instead of double-hearing it
-    if (state.speaking && process.env.CT_ECHO_GUARD !== '0') return send(200, { ok: true, dropped: 'ai-speaking' });
+    if ((state.speaking || Date.now() - speakEndedAt < 2000) && process.env.CT_ECHO_GUARD !== '0') return send(200, { ok: true, dropped: 'ai-speaking' });
     if (t) {
       const h = state.humans.find(x => x.mic == b.mic);
       ctxAppend({ kind: 'town', text: `${h && h.name ? h.name : 'mic ' + b.mic}: ${t}` });
@@ -485,6 +497,22 @@ const server = http.createServer(async (req, res) => {
     }).on('error', () => send(200, { models: modelsCache.list }));
     return;
   }
+  // speaker mapping test: play "I am <name>" in that AI's voice on its channel
+  if (req.method === 'POST' && url.pathname === '/api/speak/test') {
+    const b = await body(req);
+    const idx = state.players.findIndex(p => p.name === b.player);
+    if (idx < 0) return send(404, { err: 'no such player' });
+    if (state.speaking) return send(409, { err: 'already speaking' });
+    const pl = state.players[idx];
+    const channel = +b.channel || pl.channel || idx + 1;
+    state.speaking = { id: 'test', player: pl.name };
+    const text = `I am ${pl.name}. This is my speaker, on channel ${channel}.`;
+    synthToFile(voiceFor(idx, pl), text, path.join(GAME, `speech-test-${idx}.wav`), (err, file) => {
+      if (err) { state.speaking = null; return; }
+      playFile(file, channel, () => { state.speaking = null; speakEndedAt = Date.now(); });
+    });
+    return send(200, { ok: true, channel });
+  }
   if (req.method === 'POST' && url.pathname === '/api/speak') {
     const b = await body(req);
     if (b.stop) { if (speakChild) try { speakChild.kill('SIGKILL'); } catch (e) {} state.speaking = null; save(); return send(200, { ok: true }); }
@@ -496,7 +524,7 @@ const server = http.createServer(async (req, res) => {
     state.speaking = { id: q.id, player: q.player }; save();
     const onDone = () => {
       const wasStopped = !state.speaking || state.speaking.id !== q.id;
-      state.speaking = null;
+      state.speaking = null; speakEndedAt = Date.now();
       if (!wasStopped) deliverQueued(q.id); else save();
     };
     const startPlayback = (file) => playFile(file, pl.channel || idx + 1, onDone);

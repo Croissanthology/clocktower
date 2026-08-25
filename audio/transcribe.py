@@ -162,6 +162,8 @@ def is_hallucination(text):
         return True
     if t in HALLUCINATION_PHRASES:
         return True
+    if VOCAB_PROMPT and difflib.SequenceMatcher(None, t, VOCAB_PROMPT.lower()).ratio() >= 0.6:
+        return True  # whisper parroting its vocabulary prompt on near-silence
     words = t.split()
     if len(words) >= 4 and len(set(words)) == 1:
         return True  # e.g. "you you you you"
@@ -174,6 +176,9 @@ def is_hallucination(text):
     return False
 
 
+VOCAB_PROMPT = ""
+
+
 def transcribe_mlx(audio_16k, lang, model_repo):
     kwargs = dict(
         path_or_hf_repo=model_repo,
@@ -183,6 +188,8 @@ def transcribe_mlx(audio_16k, lang, model_repo):
     )
     if lang and lang != "auto":
         kwargs["language"] = lang
+    if VOCAB_PROMPT:
+        kwargs["initial_prompt"] = VOCAB_PROMPT
     result = mlx_whisper.transcribe(audio_16k, **kwargs)
     return result["text"].strip()
 
@@ -235,6 +242,7 @@ def main():
     ap.add_argument("--server", default="http://localhost:4141", help="game server base URL")
     ap.add_argument("--lang", default=os.environ.get("CT_MIC_LANG", "en"), help="language code, or 'auto' to detect per chunk")
     ap.add_argument("--threshold", type=float, default=0.02, help="RMS silence threshold, 0..1 (default 0.02)")
+    ap.add_argument("--prompt", default="", help="vocabulary hint for whisper (player names, game terms)")
     ap.add_argument("--dominance", type=float, default=0.4, help="only transcribe channels >= this fraction of the loudest channel's level per chunk (crosstalk gate, 0 = off)")
     ap.add_argument("--chunk-seconds", type=float, default=5.0, help="chunk window length in seconds")
     ap.add_argument("--model", default="small", choices=sorted(MODEL_MAP_MLX.keys()), help="whisper model size")
@@ -253,6 +261,8 @@ def main():
     if not args.device:
         ap.error("--device is required unless --list is given")
 
+    global VOCAB_PROMPT
+    VOCAB_PROMPT = args.prompt
     idx, dev = resolve_input_device(args.device)
     max_in = dev["max_input_channels"]
     n_channels = args.channels
