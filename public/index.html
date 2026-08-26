@@ -5,13 +5,41 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>clocktower</title>
 <style>
-  body { --bg:#131417; --panel:#1b1d22; --panel2:#22252c; --line:#2e323b;
-    --ink:#e6e8ec; --dim:#8b909b; --pink:#f27ab0; --pinkbg:#38202e;
-    --ask:#e3c94e; --askbg:#332e17; --bad:#e08a8a; --marg:#b9a7f2; }
+  body { --bg:#0e0a0b; --panel:#161011; --panel2:#1f1617; --line:#3a2427;
+    --ink:#e9dcc6; --dim:#8f7f74; --pink:#e5799f; --pinkbg:#3a1a26;
+    --ask:#d9b84a; --askbg:#332a12; --bad:#d0706a; --marg:#c2a8ee;
+    --ember:#7a1210; --aura:.55; --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif; }
   body.day { --bg:#efece3; --panel:#faf8f1; --panel2:#f1ede1; --line:#d9d3c3;
     --ink:#28262f; --dim:#847e6e; --pink:#c2337f; --pinkbg:#fadfee;
-    --ask:#8f7a10; --askbg:#f5ecc6; --bad:#b04a4a; --marg:#7a5fd0; }
+    --ask:#8f7a10; --askbg:#f5ecc6; --bad:#b04a4a; --marg:#7a5fd0; --ember:#a0342a; --aura:.22; }
   * { box-sizing:border-box; }
+  /* faustian aura: oxblood vignette breathing like firelight, plus a hairline frame */
+  #aura, #aura::before, #aura::after, #frame { position:fixed; inset:0; pointer-events:none; }
+  #aura { z-index:50; opacity:var(--aura); mix-blend-mode:screen;
+    background:
+      radial-gradient(120% 90% at 50% 115%, var(--ember) 0%, rgba(122,18,16,.35) 30%, transparent 62%),
+      radial-gradient(70% 60% at 50% -20%, rgba(122,18,16,.55) 0%, transparent 60%),
+      radial-gradient(60% 100% at -10% 50%, rgba(122,18,16,.4) 0%, transparent 55%),
+      radial-gradient(60% 100% at 110% 50%, rgba(122,18,16,.4) 0%, transparent 55%);
+    animation:breathe 7.3s ease-in-out infinite; }
+  #aura::before { content:""; background:radial-gradient(90% 70% at 50% 110%, rgba(190,60,20,.35), transparent 60%);
+    animation:flick 1.7s steps(1,end) infinite; }
+  #aura::after { content:""; background:radial-gradient(130% 100% at 50% 50%, transparent 55%, rgba(0,0,0,.7) 100%);
+    mix-blend-mode:multiply; }
+  @keyframes breathe { 0%,100% { opacity:var(--aura); transform:scale(1); }
+    38% { opacity:calc(var(--aura) * .82); transform:scale(1.012); }
+    64% { opacity:calc(var(--aura) * 1.08); transform:scale(.996); } }
+  @keyframes flick { 0% { opacity:.55 } 9% { opacity:.35 } 17% { opacity:.6 } 26% { opacity:.42 } 33% { opacity:.5 }
+    41% { opacity:.3 } 52% { opacity:.58 } 60% { opacity:.45 } 71% { opacity:.62 } 79% { opacity:.38 } 90% { opacity:.52 } 100% { opacity:.55 } }
+  #frame { z-index:51; margin:7px; border:1px solid rgba(233,220,198,.16); }
+  #frame::before, #frame::after { content:""; position:absolute; width:20px; height:20px; border:1px solid rgba(233,220,198,.7); }
+  #frame::before { left:-1px; top:-1px; border-right:none; border-bottom:none; }
+  #frame::after { right:-1px; bottom:-1px; border-left:none; border-top:none; }
+  #frame i, #frame b { position:absolute; width:20px; height:20px; border:1px solid rgba(233,220,198,.7); }
+  #frame i { right:-1px; top:-1px; border-left:none; border-bottom:none; }
+  #frame b { left:-1px; bottom:-1px; border-right:none; border-top:none; }
+  body.day #frame, body.day #frame::before, body.day #frame::after, body.day #frame i, body.day #frame b { border-color:rgba(40,38,47,.3); }
+  @media (prefers-reduced-motion:reduce) { #aura, #aura::before { animation:none; } }
   body { margin:0; background:var(--bg); color:var(--ink);
          font:15px/1.45 -apple-system, system-ui, sans-serif; height:100vh; overflow:hidden;
          transition:background .4s, color .4s; }
@@ -24,7 +52,7 @@
                 padding:2px 22px 8px 8px; }
   button.back:hover { color:var(--dim); }
   button.moon { background:none; border:none; padding:4px 8px; display:flex; align-items:center; }
-  button.pause.paused { background:var(--bad); color:var(--bg); border-color:var(--bad); font-weight:700; }
+  button.pause.paused { background:var(--ember); color:var(--ink); border-color:#a8362c; font-weight:600; letter-spacing:.03em; }
   button.pause.deny { animation:shake .5s; }
   @keyframes shake { 20%,60% { transform:translateX(-4px); } 40%,80% { transform:translateX(4px); } }
   .micw { display:flex; align-items:flex-end; gap:2px; height:20px; padding:4px 10px; cursor:pointer;
@@ -80,19 +108,25 @@
   textarea:focus, input:focus, select:focus { outline:none; border-color:var(--dim); }
   textarea { resize:none; }
   .top { display:flex; align-items:center; gap:12px; padding:10px 16px; border-bottom:1px solid var(--line); height:52px; }
-  .top .t { color:var(--dim); font-variant-numeric:tabular-nums; }
+  .top .t { color:var(--dim); font-variant-numeric:tabular-nums; font-family:var(--serif); font-size:16px; letter-spacing:.06em; }
+  .top { background:linear-gradient(to bottom, rgba(122,18,16,.16), transparent); border-bottom-color:rgba(201,151,63,.25); }
+  .flash .who, .flash .what, .full .hd .role { font-family:var(--serif); }
+  .flash .what { font-style:italic; font-weight:600; }
   #view { height:calc(100vh - 52px); overflow:hidden; }
 
   /* home */
   .home { display:flex; flex-direction:column; height:100%; padding:14px; gap:14px; }
   .boxes { flex:1; display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:14px; min-height:0; }
-  .box { border:1.5px solid var(--c); border-radius:14px; background:var(--panel); padding:14px 16px;
+  .box { border:1px solid color-mix(in srgb, var(--c) 88%, var(--line)); border-radius:14px; background:var(--panel); padding:14px 16px;
          cursor:pointer; display:flex; flex-direction:column; gap:8px; min-height:0; overflow:hidden;
          transition:box-shadow .25s; }
   .box:hover { background:var(--panel2); }
   .box.glow { box-shadow:0 0 30px 2px var(--c); }
   .box .hd { display:flex; align-items:baseline; gap:10px; }
-  .box .nm { font-size:24px; font-weight:650; color:var(--c); }
+  .box .nm { font:italic 600 28px/1 var(--serif); color:var(--c); letter-spacing:.01em; }
+  .box { box-shadow:inset 0 0 0 1px rgba(0,0,0,.35), inset 0 -60px 80px -60px rgba(122,18,16,.35); }
+  .box::after { content:""; position:absolute; inset:5px; border:1px solid var(--c); opacity:.28; border-radius:10px; pointer-events:none; }
+  .box { position:relative; }
   .box .rl { color:var(--ink); font-size:14px; }
   .box .mdl { color:var(--dim); font-size:12px; max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .dot { width:9px; height:9px; border-radius:50%; background:var(--dim); margin-left:auto; flex-shrink:0; align-self:center; }
@@ -111,7 +145,7 @@
   .sayline .txt { flex:1; }
   .err { color:var(--bad); font-size:13px; }
   .pingbar { display:flex; align-items:flex-end; gap:12px; flex-shrink:0; }
-  .pingbar .lbl { font-weight:650; letter-spacing:.08em; font-size:13px; color:var(--dim);
+  .pingbar .lbl { font:600 15px var(--serif); letter-spacing:.14em; color:var(--dim); text-transform:uppercase;
                   cursor:pointer; padding:12px 4px; }
   .pingbar .lbl:hover { color:var(--ink); }
   #ping { height:46px; font-size:15px; }
@@ -160,6 +194,7 @@
 </style>
 </head>
 <body>
+<div id="aura"></div><div id="frame"><i></i><b></b></div>
 <div class="top" id="top"></div>
 <div id="view"></div>
 
@@ -170,7 +205,7 @@ const ROLES = {
   minion:["poisoner","spy","scarlet woman","baron"],
   demon:["imp"],
 };
-const COLORS = ["#54b868","#e0a34e","#e06a8a","#5e9fe0"];
+const COLORS = ["#8aa46a","#c9973f","#c8656e","#7d8fb3"];
 const ALLIGATOR_PERSONA = "You are Alligator, a stately plushie alligator with a grand ceremonial manner. Open every spoken utterance with 'I will speak the following words:' and close it with 'I have spoken.' The words in between stay brutally short.";
 function alignmentOf(r){ return (ROLES.minion.includes(r)||ROLES.demon.includes(r))?"evil":"good"; }
 function esc(s){ return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
