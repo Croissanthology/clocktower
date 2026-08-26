@@ -98,6 +98,7 @@ def main():
     ap.add_argument("--channel", type=int, help="1-based output channel to play into")
     ap.add_argument("--rate", type=float, default=1.0, help="playback speed multiplier (default 1.0)")
     ap.add_argument("--list", action="store_true", help="list output devices and exit")
+    ap.add_argument("--head", type=float, default=0, help="play only the first N seconds, with a short fade-out")
     args = ap.parse_args()
 
     if args.list:
@@ -132,6 +133,12 @@ def main():
             file=sys.stderr,
         )
         data = data[:, 0]
+    if args.head and args.head > 0:
+        n = int(samplerate * args.head)
+        if len(data) > n:
+            fade = min(n, int(samplerate * 0.4))
+            data = data[:n].copy()
+            data[-fade:] *= np.linspace(1.0, 0.0, fade, dtype="float32")
 
     if args.rate <= 0:
         die(f"--rate must be positive (got {args.rate})")

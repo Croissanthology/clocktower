@@ -392,6 +392,18 @@ function playFile(file, channel, done) {
   }
 }
 
+// a dark bell announces every AI line (CT_BELL=0 to silence); trimmed so speech starts on the decay
+const BELL = path.join(ROOT, 'audio', 'sfx', 'bell.wav');
+function ringBell(channel, then) {
+  if (process.env.CT_BELL === '0' || !fs.existsSync(BELL)) return then();
+  const py = path.join(ROOT, 'audio', 'venv', 'bin', 'python');
+  const pc = path.join(ROOT, 'audio', 'play_channel.py');
+  const args = process.env.CT_AUDIO_DEVICE && fs.existsSync(pc)
+    ? [fs.existsSync(py) ? py : 'python3', [pc, '--device', process.env.CT_AUDIO_DEVICE, '--channel', String(channel), '--rate', PLAY_RATE, '--head', '2.2', BELL]]
+    : ['afplay', ['-t', '2.2', BELL]];
+  speakChild = execFile(args[0], args[1], { timeout: 10000 }, () => then());
+}
+
 // pre-synthesize a queued utterance so speak plays instantly, whatever the engine's latency
 function preSynth(q) {
   const idx = state.players.findIndex(p => p.name === q.player);
@@ -509,7 +521,7 @@ const server = http.createServer(async (req, res) => {
     const text = `I am ${pl.name}. This is my speaker, on channel ${channel}.`;
     synthToFile(voiceFor(idx, pl), text, path.join(GAME, `speech-test-${idx}.wav`), (err, file) => {
       if (err) { state.speaking = null; return; }
-      playFile(file, channel, () => { state.speaking = null; speakEndedAt = Date.now(); });
+      ringBell(channel, () => playFile(file, channel, () => { state.speaking = null; speakEndedAt = Date.now(); }));
     });
     return send(200, { ok: true, channel });
   }
@@ -527,7 +539,8 @@ const server = http.createServer(async (req, res) => {
       state.speaking = null; speakEndedAt = Date.now();
       if (!wasStopped) deliverQueued(q.id); else save();
     };
-    const startPlayback = (file) => playFile(file, pl.channel || idx + 1, onDone);
+    const ch = pl.channel || idx + 1;
+    const startPlayback = (file) => ringBell(ch, () => playFile(file, ch, onDone));
     if (q.file && fs.existsSync(q.file)) startPlayback(q.file);
     else synthToFile(voiceFor(idx, pl), q.text, path.join(GAME, `speech-${q.id}.wav`), (err, file) => {
       if (err) { state.speaking = null; save(); return; }
