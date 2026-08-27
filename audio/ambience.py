@@ -52,7 +52,7 @@ def idle(secs):
         rem = end - time.time()
         if rem <= 0: return
         if clock and to_minute() < min(rem, 1.0):
-            time.sleep(max(0, to_minute())); sd.play(clock[1], clock[0], device=dev, blocking=True)
+            time.sleep(max(0, to_minute())); print(time.strftime("%H:%M:%S"), "clock"); sd.play(clock[1], clock[0], device=dev, blocking=True)
             continue
         time.sleep(min(rem, 0.5))
 print("ambience on", sd.query_devices(dev)["name"] if dev is not None else "default output", "—", {k: len(clips[k]) for k in kinds})
