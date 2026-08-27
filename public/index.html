@@ -481,22 +481,6 @@ async function loadInputs(){
     ui.micDevice = pick.name; ui.micChannels = Math.min(8, pick.in);
   }
   if (view.name==="mics") renderMics();
-  if (view.name==="whispers") {
-    const ws = S.whispers||[];
-    const sg = ws.length+":"+(ws[ws.length-1]||{}).id;
-    if (sg!==ui.whSig) {
-      ui.whSig = sg;
-      const pairs = [...new Set(ws.map(w=>w.human+"\u0000"+w.ai))].map(k=>k.split("\u0000"));
-      pairs.sort((a,b)=>{ const la=ws.filter(w=>w.human===a[0]&&w.ai===a[1]).pop().ts, lb=ws.filter(w=>w.human===b[0]&&w.ai===b[1]).pop().ts; return lb-la; });
-      const el = document.getElementById("whispers-body");
-      el.innerHTML = pairs.length ? pairs.map(([h,a])=>{
-        const c = colorOf(a); const t = ws.filter(w=>w.human===h&&w.ai===a);
-        const waiting = t[t.length-1].from==="human";
-        return `<div class="s-phase" style="display:flex;gap:10px;align-items:baseline"><span>${esc(h)} &harr; <span style="color:${c}">${esc(a)}</span></span>${waiting?`<span style="color:${c};text-transform:none;letter-spacing:0">answering…</span>`:""}</div>`+
-          t.map(w=>`<div class="s-say">${w.from==="ai"?`<b style="color:${c}">${esc(a)}</b>`:`<b style="color:var(--ink)">${esc(h)}</b>`}: ${esc(w.text)}</div>`).join("");
-      }).join("") : `<div class="s-note">no whispers yet</div>`;
-    }
-  }
 }
 function renderMics(){
   const el = document.getElementById("mics-body"); if(!el) return;
@@ -665,6 +649,22 @@ function update(){
 
   if (view.name==="mics") renderMics();
   if (view.name==="feed") renderFeed();
+  if (view.name==="whispers") {
+    const ws = S.whispers||[];
+    const sg = ws.length+":"+(ws[ws.length-1]||{}).id;
+    if (sg!==ui.whSig) {
+      ui.whSig = sg;
+      const pairs = [...new Set(ws.map(w=>w.human+"\u0000"+w.ai))].map(k=>k.split("\u0000"));
+      pairs.sort((a,b)=>{ const la=ws.filter(w=>w.human===a[0]&&w.ai===a[1]).pop().ts, lb=ws.filter(w=>w.human===b[0]&&w.ai===b[1]).pop().ts; return lb-la; });
+      const el = document.getElementById("whispers-body");
+      el.innerHTML = pairs.length ? pairs.map(([h,a])=>{
+        const c = colorOf(a); const t = ws.filter(w=>w.human===h&&w.ai===a);
+        const waiting = t[t.length-1].from==="human";
+        return `<div class="s-phase" style="display:flex;gap:10px;align-items:baseline"><span>${esc(h)} &harr; <span style="color:${c}">${esc(a)}</span></span>${waiting?`<span style="color:${c};text-transform:none;letter-spacing:0">answering…</span>`:""}</div>`+
+          t.map(w=>`<div class="s-say">${w.from==="ai"?`<b style="color:${c}">${esc(a)}</b>`:`<b style="color:var(--ink)">${esc(h)}</b>`}: ${esc(w.text)}</div>`).join("");
+      }).join("") : `<div class="s-note">no whispers yet</div>`;
+    }
+  }
 
   if (view.name==="ctx") {
     if (ui.streamLen !== S.ctx.length) {
