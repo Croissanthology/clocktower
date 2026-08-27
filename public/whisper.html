@@ -27,15 +27,17 @@
   #frame b { left:-1px; bottom:-1px; border-right:none; border-top:none; }
 
   .wrap { height:100%; display:flex; flex-direction:column; max-width:820px; margin:0 auto; padding:28px 24px 20px; gap:18px; }
+  .wrap.pick { justify-content:center; gap:40px; padding-bottom:12vh; }
+  .wrap.pick h1 { font-size:54px; }
   h1 { margin:0; font:italic 600 34px/1.1 var(--serif); letter-spacing:.01em; }
   h1 small { display:block; font:400 13px/1.4 -apple-system, system-ui, sans-serif; color:var(--dim); letter-spacing:.12em; text-transform:uppercase; margin-top:8px; }
   .step { display:flex; flex-direction:column; gap:12px; }
   .q { color:var(--dim); font:500 13px/1 -apple-system, system-ui, sans-serif; letter-spacing:.14em; text-transform:uppercase; }
   .chips { display:flex; flex-wrap:wrap; gap:10px; }
-  .chip { border:1px solid var(--line); background:var(--panel2); color:var(--ink); border-radius:999px; padding:12px 22px;
-          font:500 17px/1 var(--serif); cursor:pointer; letter-spacing:.02em; }
+  .chip { border:1px solid var(--line); background:var(--panel2); color:var(--ink); border-radius:999px; padding:16px 30px;
+          font:500 24px/1 var(--serif); cursor:pointer; letter-spacing:.02em; }
   .chip:hover { border-color:var(--dim); background:var(--panel); }
-  .chip.ai { border-color:var(--c); color:var(--c); font-style:italic; font-size:20px; }
+  .chip.ai { border-color:var(--c); color:var(--c); font-style:italic; font-size:30px; padding:18px 34px; }
   .hd { display:flex; align-items:baseline; gap:14px; border-bottom:1px solid var(--line); padding-bottom:12px; }
   .hd .you { color:var(--dim); }
   .hd .them { font:italic 600 30px/1 var(--serif); color:var(--c); }
@@ -73,6 +75,7 @@ try { me = sessionStorage.getItem("me") || null; ai = sessionStorage.getItem("ai
 
 const app = document.getElementById("app");
 function render(){
+  app.className = "wrap" + (me && ai ? "" : " pick");
   if (!me) {
     app.innerHTML = `<h1>Whisper<small>a private word with one of the machines</small></h1>
       <div class="step"><div class="q">who are you</div>
