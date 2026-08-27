@@ -514,16 +514,32 @@ function body(req) {
   });
 }
 
+// --- wrangler token: everything except the whisper page/api needs it from non-localhost clients ---
+// (roles and sheets live in /api/state; a curious camper on the church wifi must not be able to read them)
+const TOKEN_FILE = path.join(GAME, 'token');
+let TOKEN = process.env.CT_TOKEN || '';
+if (!TOKEN) { try { TOKEN = fs.readFileSync(TOKEN_FILE, 'utf8').trim(); } catch (e) {} }
+if (!TOKEN) { TOKEN = require('crypto').randomBytes(6).toString('hex'); fs.writeFileSync(TOKEN_FILE, TOKEN); }
+const PUBLIC_PATHS = new Set(['/whisper', '/whisper.html', '/api/roster', '/api/whisper']);
+function wranglerUrl() { return `http://${lanIp()}:${PORT}/?k=${TOKEN}`; }
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const send = (code, obj) => { res.writeHead(code, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+  const local = /^(::1|::ffff:127\.0\.0\.1|127\.0\.0\.1)$/.test(req.socket.remoteAddress || '');
+  const cookieTok = ((req.headers.cookie || '').match(/(?:^|;\s*)ct=([a-f0-9]+)/) || [])[1];
+  const qTok = url.searchParams.get('k');
+  if (!local && !PUBLIC_PATHS.has(url.pathname) && qTok !== TOKEN && cookieTok !== TOKEN) {
+    res.writeHead(403, { 'Content-Type': 'text/plain' }); return res.end('wrangler only');
+  }
+  if (qTok === TOKEN && !local) res.setHeader('Set-Cookie', `ct=${TOKEN}; Path=/; Max-Age=86400; SameSite=Lax`);
 
   if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
     res.writeHead(200, { 'Content-Type': 'text/html' });
     return res.end(fs.readFileSync(path.join(ROOT, 'public', 'index.html')));
   }
   if (req.method === 'GET' && url.pathname === '/api/state') {
-    return send(200, { ...state, phaseLabel: phaseLabel(), rulesLoaded: fs.existsSync(RULES_FILE), model: MODEL, mics, lanUrl: `http://${lanIp()}:${PORT}/whisper` });
+    return send(200, { ...state, phaseLabel: phaseLabel(), rulesLoaded: fs.existsSync(RULES_FILE), model: MODEL, mics, lanUrl: `http://${lanIp()}:${PORT}/whisper`, wranglerUrl: wranglerUrl() });
   }
   // --- the whisper channel, served to side laptops on the LAN ---
   if (req.method === 'GET' && (url.pathname === '/whisper' || url.pathname === '/whisper.html')) {
@@ -740,4 +756,4 @@ const server = http.createServer(async (req, res) => {
   send(404, { err: 'not found' });
 });
 
-server.listen(PORT, () => console.log(`clocktower wrangler on http://localhost:${PORT}  (model=${MODEL}, effort=${EFFORT})`));
+server.listen(PORT, () => console.log(`clocktower wrangler on http://localhost:${PORT}  (model=${MODEL}, effort=${EFFORT})\n  phone/other laptops (wrangler, secret): ${wranglerUrl()}\n  side laptops (whisper, public):        http://${lanIp()}:${PORT}/whisper`));

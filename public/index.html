@@ -290,7 +290,7 @@ function nav(name, ai){
     v.innerHTML = `<div class="full">
       <div class="hd"><button class="back" onclick="nav('home')">&larr;</button>
         <span class="role">WHISPERS</span>
-        <span style="color:var(--dim);font-size:13px;margin-left:auto">side laptops open <b style="color:var(--ink);font-weight:500;user-select:all">${esc(S.lanUrl||"")}</b></span></div>
+        <span style="color:var(--dim);font-size:13px;margin-left:auto;text-align:right;line-height:1.5">side laptops open <b style="color:var(--ink);font-weight:500;user-select:all">${esc(S.lanUrl||"")}</b><br>your phone opens <b style="color:var(--ink);font-weight:500;user-select:all">${esc(S.wranglerUrl||"")}</b> (secret — don't show the table)</span></div>
       <div class="stream" id="whispers-body"></div>
       <div class="hint">private threads between humans at the side laptops and the AIs. text only, never spoken. the storyteller may read; the table may not.</div>
     </div>`;
