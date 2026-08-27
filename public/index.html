@@ -286,6 +286,16 @@ function nav(name, ai){
       <div class="who">${esc(p.name)} · ${esc(p.role)}</div>
       <div class="what">${esc(a.type)} &rarr; ${esc(a.target||"—")}</div></div>`;
   }
+  if (name==="whispers") {
+    v.innerHTML = `<div class="full">
+      <div class="hd"><button class="back" onclick="nav('home')">&larr;</button>
+        <span class="role">WHISPERS</span>
+        <span style="color:var(--dim);font-size:13px;margin-left:auto">side laptops open <b style="color:var(--ink);font-weight:500;user-select:all">${esc(S.lanUrl||"")}</b></span></div>
+      <div class="stream" id="whispers-body"></div>
+      <div class="hint">private threads between humans at the side laptops and the AIs. text only, never spoken. the storyteller may read; the table may not.</div>
+    </div>`;
+    ui.whSig = "";
+  }
   if (name==="ctx") {
     v.innerHTML = `<div class="full">
       <div class="hd"><button class="back" onclick="nav('home')">&larr;</button>
@@ -471,6 +481,22 @@ async function loadInputs(){
     ui.micDevice = pick.name; ui.micChannels = Math.min(8, pick.in);
   }
   if (view.name==="mics") renderMics();
+  if (view.name==="whispers") {
+    const ws = S.whispers||[];
+    const sg = ws.length+":"+(ws[ws.length-1]||{}).id;
+    if (sg!==ui.whSig) {
+      ui.whSig = sg;
+      const pairs = [...new Set(ws.map(w=>w.human+"\u0000"+w.ai))].map(k=>k.split("\u0000"));
+      pairs.sort((a,b)=>{ const la=ws.filter(w=>w.human===a[0]&&w.ai===a[1]).pop().ts, lb=ws.filter(w=>w.human===b[0]&&w.ai===b[1]).pop().ts; return lb-la; });
+      const el = document.getElementById("whispers-body");
+      el.innerHTML = pairs.length ? pairs.map(([h,a])=>{
+        const c = colorOf(a); const t = ws.filter(w=>w.human===h&&w.ai===a);
+        const waiting = t[t.length-1].from==="human";
+        return `<div class="s-phase" style="display:flex;gap:10px;align-items:baseline"><span>${esc(h)} &harr; <span style="color:${c}">${esc(a)}</span></span>${waiting?`<span style="color:${c};text-transform:none;letter-spacing:0">answering…</span>`:""}</div>`+
+          t.map(w=>`<div class="s-say">${w.from==="ai"?`<b style="color:${c}">${esc(a)}</b>`:`<b style="color:var(--ink)">${esc(h)}</b>`}: ${esc(w.text)}</div>`).join("");
+      }).join("") : `<div class="s-note">no whispers yet</div>`;
+    }
+  }
 }
 function renderMics(){
   const el = document.getElementById("mics-body"); if(!el) return;
@@ -594,6 +620,7 @@ function update(){
     <button class="${ui.auto?"on":""}" onclick="toggleAuto()">auto ${ui.secs}s</button>
     <select style="width:74px" onchange="ui.secs=+this.value; if(ui.auto){toggleAuto();toggleAuto()}">
       ${[30,45,60,90].map(x=>`<option ${x===ui.secs?"selected":""}>${x}</option>`).join("")}</select>
+    <button class="ghost" onclick="nav('whispers')">whispers${(S.whispers||[]).length?` ${(S.whispers||[]).length}`:""}</button>
     <button class="ghost" onclick="nav('setup')">setup</button>`;
 
   if (view.name==="home") {

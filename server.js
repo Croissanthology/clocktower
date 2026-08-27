@@ -29,7 +29,7 @@ const NIGHT_CHOOSERS = {
 
 fs.mkdirSync(GAME, { recursive: true });
 
-let state = { players: [], queue: [], ctx: [], humans: [], seats: [], phase: { time: 'night', day: 1 }, hadFirstDay: false, turnN: 0, seq: 0, speaking: null, paused: false };
+let state = { players: [], queue: [], ctx: [], humans: [], seats: [], whispers: [], phase: { time: 'night', day: 1 }, hadFirstDay: false, turnN: 0, seq: 0, speaking: null, paused: false };
 try {
   const disk = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
   state = Object.assign(state, disk);
@@ -48,12 +48,19 @@ try {
   if (state.paused === undefined) state.paused = false;
   if (!state.seats) state.seats = state.players.map(p => p.name).concat(state.humans.map(h => h.name));
   if (state.hadFirstDay === undefined) state.hadFirstDay = true;
+  if (!state.whispers) state.whispers = [];
   for (const p of state.players) {
     if (p.ctxCursor === undefined) p.ctxCursor = state.ctx.length;
     if (!p.history) p.history = [];
   }
 } catch (e) {}
 
+const os = require('os');
+function lanIp() {
+  for (const [name, addrs] of Object.entries(os.networkInterfaces()))
+    for (const a of addrs || []) if (a.family === 'IPv4' && !a.internal && !name.startsWith('utun') && !name.startsWith('bridge')) return a.address;
+  return 'localhost';
+}
 function save() { fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 1)); }
 function player(name) { return state.players.find(p => p.name === name); }
 function log(name, entry) {
@@ -148,6 +155,29 @@ function ctxSlice(p) {
   }).join('\n');
 }
 
+// the last ~40 ctx entries before the cursor — already seen once, repeated so the player never goes in blind
+const RECENT_N = 40;
+function renderCtx(entries) {
+  return entries.map(e => {
+    if (e.kind === 'say') return `${e.player} (AI, aloud)${e.to && e.to !== 'town' ? ' to ' + e.to : ''}: ${e.text}`;
+    if (e.kind === 'note') return `MARGOT: ${e.text}`;
+    if (e.kind === 'phase') return `GAME: ${e.text}`;
+    return e.text;
+  }).join('\n');
+}
+function recentCtx(p) {
+  const cur = p.ctxCursor || 0;
+  return renderCtx(state.ctx.slice(Math.max(0, cur - RECENT_N), cur));
+}
+function whisperThread(human, ai) { return state.whispers.filter(w => w.human === human && w.ai === ai); }
+function renderWhispers(list) {
+  return list.map(w => `${w.from === 'ai' ? 'you' : w.human} [whispering]: ${w.text}`).join('\n');
+}
+// every tick: a digest of every private thread this AI has, so whispers are never forgotten
+function whisperDigest(p) {
+  const humans = [...new Set(state.whispers.filter(w => w.ai === p.name).map(w => w.human))];
+  return humans.map(h => `— with ${h} —\n${renderWhispers(whisperThread(h, p.name).slice(-8))}`).join('\n\n');
+}
 function buildUserMessage(p, push) {
   const head = push.night ? `--NIGHT-- ${push.label} · tick ${push.turnN} · the town is silent, eyes closed` : `--DAY-- ${push.label} · tick ${push.turnN}`;
   const parts = [
@@ -164,7 +194,10 @@ function buildUserMessage(p, push) {
     parts.push(`=== your previous tick (tick ${last.turn}) — what you did ===\n${bits.join('\n')}`);
   }
   if (p.feedback) parts.push(`=== correction from last tick ===\n${p.feedback}`);
+  if (push.recent) parts.push(`=== recent table talk, for orientation (you have seen this before) ===\n${push.recent}`);
   if (push.ctxText) parts.push(`=== heard since your last turn (live mics + AI speakers; may contain transcription errors) ===\n${push.ctxText}`);
+  if (push.digest) parts.push(`=== your private whisper threads so far (only you and each whisperer know these) ===\n${push.digest}`);
+  if (push.whisper) parts.push(`=== WHISPER — ${push.whisper.map(w => w.human).join(', ')} came to you privately. Nobody else hears this. ===\n${push.whisper.map(w => `${w.human} [whispering]: ${w.text}`).join('\n')}\n\nReply in the \`whisper\` field ({"to": "<name>", "text": "..."}, one per whisperer). Your whispered reply reaches ONLY them, as text on their screen — it is never spoken aloud. Keep \`say\` empty this tick unless the table genuinely needs something from you right now. Write anything you want to remember from this exchange into the PRIVATE section of your sheet.`);
   if (push.priv) parts.push(`=== MARGOT, PRIVATELY — only you receive this ===\n${push.priv}`);
   parts.push(`=== respond now with the JSON contract only ===`);
   return parts.join('\n\n');
@@ -263,6 +296,14 @@ function pushToPlayer(p, push, attempt = 1) {
         const res = applyEdits(p, out.edits);
         if (out.action && out.action.type) p.action = { ...out.action, ts: Date.now(), seen: false };
         if (typeof out.ask === 'string' && out.ask.trim()) p.ask = { text: out.ask.trim(), ts: Date.now() };
+        const ws = Array.isArray(out.whisper) ? out.whisper : (out.whisper && out.whisper.text ? [out.whisper] : []);
+        for (const w of ws) {
+          if (!w || !String(w.text || '').trim()) continue;
+          const to = state.humans.find(h => h.name.toLowerCase() === String(w.to || '').trim().toLowerCase())
+            || (push.whisper && push.whisper.length === 1 ? state.humans.find(h => h.name === push.whisper[0].human) : null);
+          if (!to) continue;
+          state.whispers.push({ id: ++state.seq, human: to.name, ai: p.name, from: 'ai', text: String(w.text).trim(), ts: Date.now() });
+        }
         const says = [];
         for (const u of Array.isArray(out.say) ? out.say : []) {
           if (!u || !u.text) continue;
@@ -287,14 +328,38 @@ function pushToPlayer(p, push, attempt = 1) {
         p.history.push({ turn: push.turnN, phase: push.label, status: '(tick lost: bad JSON)', say: [], action: null, ask: '', edits: 0, editsFailed: 0, input: msg, thinking: thinking || '', ts: Date.now() });
       }
       save();
+      drainWhispers(p);
     });
+}
+
+// --- whispers: a human at a side laptop talks to one AI privately; the AI answers in text only ---
+function pendingWhispers(p) {
+  // human lines newer than the AI's last reply in each thread
+  const out = [];
+  for (const h of state.humans) {
+    const t = whisperThread(h.name, p.name);
+    let i = t.length; while (i > 0 && t[i - 1].from === 'human') i--;
+    for (const w of t.slice(i)) if (!w.pushed) out.push(w);
+  }
+  return out;
+}
+function drainWhispers(p) {
+  if (p.status === 'thinking') return;
+  const pend = pendingWhispers(p);
+  if (!pend.length) return;
+  for (const w of pend) w.pushed = true;
+  state.turnN++;
+  const push = { turnN: state.turnN, night: state.phase.time === 'night', label: phaseLabel(),
+    recent: recentCtx(p), ctxText: ctxSlice(p), digest: whisperDigest(p),
+    whisper: pend.map(w => ({ human: w.human, text: w.text })) };
+  pushToPlayer(p, push);
 }
 
 function doPushTargets(targets, priv, force) {
   if ((state.paused && !force) || !targets.length) return [];
   state.turnN++;
   const base = { turnN: state.turnN, night: state.phase.time === 'night', label: phaseLabel() };
-  for (const p of targets) pushToPlayer(p, { ...base, ctxText: ctxSlice(p), priv: priv[p.name] || '' });
+  for (const p of targets) pushToPlayer(p, { ...base, recent: recentCtx(p), ctxText: ctxSlice(p), digest: whisperDigest(p), priv: priv[p.name] || '' });
   save();
   return targets.map(p => p.name);
 }
@@ -458,7 +523,36 @@ const server = http.createServer(async (req, res) => {
     return res.end(fs.readFileSync(path.join(ROOT, 'public', 'index.html')));
   }
   if (req.method === 'GET' && url.pathname === '/api/state') {
-    return send(200, { ...state, phaseLabel: phaseLabel(), rulesLoaded: fs.existsSync(RULES_FILE), model: MODEL, mics });
+    return send(200, { ...state, phaseLabel: phaseLabel(), rulesLoaded: fs.existsSync(RULES_FILE), model: MODEL, mics, lanUrl: `http://${lanIp()}:${PORT}/whisper` });
+  }
+  // --- the whisper channel, served to side laptops on the LAN ---
+  if (req.method === 'GET' && (url.pathname === '/whisper' || url.pathname === '/whisper.html')) {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    return res.end(fs.readFileSync(path.join(ROOT, 'public', 'whisper.html')));
+  }
+  if (req.method === 'GET' && url.pathname === '/api/roster') {
+    // deliberately narrow: names only, no roles, no sheets
+    return send(200, { humans: state.humans.map(h => h.name), ais: state.players.map((p, i) => ({ name: p.name, idx: i })), phase: phaseLabel() });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/whisper') {
+    const human = url.searchParams.get('human') || '', ai = url.searchParams.get('ai') || '';
+    const p = player(ai);
+    if (!p || !state.humans.find(h => h.name === human)) return send(404, { err: 'no such pair' });
+    const thread = whisperThread(human, ai).map(({ id, from, text, ts }) => ({ id, from, text, ts }));
+    const waiting = thread.length > 0 && thread[thread.length - 1].from === 'human';
+    return send(200, { thread, thinking: waiting, status: p.status });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/whisper') {
+    const b = await body(req);
+    const p = player(b.ai || '');
+    const h = state.humans.find(x => x.name === b.human);
+    const text = String(b.text || '').trim().slice(0, 1500);
+    if (!p || !h) return send(404, { err: 'no such pair' });
+    if (!text) return send(400, { err: 'empty' });
+    state.whispers.push({ id: ++state.seq, human: h.name, ai: p.name, from: 'human', text, ts: Date.now() });
+    save();
+    drainWhispers(p);
+    return send(200, { ok: true });
   }
   if (req.method === 'POST' && url.pathname === '/api/miclevels') {
     const b = await body(req);
@@ -570,14 +664,14 @@ const server = http.createServer(async (req, res) => {
       return { name, role: p.role || '?', alignment: p.alignment || 'good', model: p.model || '', voice: p.voice || '',
         card: `Your secret character: ${p.role} (${p.alignment}).\n\n${roleRules || 'Your exact ability is in the rules above — reread it now.'}\n\n${p.persona || ''}`.trim(),
         status: 'idle', lastStatus: '', action: null, ask: null, parseError: null, feedback: '', ctxCursor: 0,
-        sheet: `ME: ${name}, ${p.role} (${p.alignment}). ${p.persona || ''}\n\nREADS\n(none yet)\n\nPLAYERS\n(unknown yet)\n\nEVENTS\n(game not started)`,
+        sheet: `ME: ${name}, ${p.role} (${p.alignment}). ${p.persona || ''}\n\nREADS\n(none yet)\n\nPLAYERS\n(unknown yet)\n\nPRIVATE (whispered to me — never say aloud unless I decide to)\n(none yet)\n\nEVENTS\n(game not started)`,
         history: [],
       };
     });
     state.humans = (b.humans || []).map((h, i) => ({ name: (h.name || '').trim(), mic: h.mic || i + 1 })).filter(h => h.name);
     state.seats = (b.seats && b.seats.length) ? b.seats : state.players.map(p => p.name).concat(state.humans.map(h => h.name));
     for (const f of fs.readdirSync(GAME)) if (/^speech-.*\.(wav|aiff)$/.test(f)) try { fs.unlinkSync(path.join(GAME, f)); } catch (e) {}
-    state.queue = []; state.ctx = []; state.turnN = 0; state.seq = 0;
+    state.queue = []; state.ctx = []; state.whispers = []; state.turnN = 0; state.seq = 0;
     state.phase = { time: 'night', day: 1 }; state.hadFirstDay = false; state.speaking = null;
     state.players.forEach(sysPromptPath);
     ctxAppend({ kind: 'phase', text: 'night 1 falls — the game begins' });
