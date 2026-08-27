@@ -100,5 +100,5 @@ def chant(i, text):
 if __name__ == "__main__":
     write("bell.wav", bell())
     for i in range(4): write(f"quill-{i}.wav", quill(), peak=0.5)
-    for i in range(4): write(f"creak-{i}.wav", creak(), peak=0.6)
+    # creaks are real CC0 recordings (archive.org Red_Library_Creaks); procedural creak() kept for reference
     for i, tx in enumerate(CHANTS): chant(i, tx)
