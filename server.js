@@ -662,7 +662,8 @@ setInterval(() => {
     }
   }
   // auto-speak: oldest queued line, when the room is quiet and no AI is speaking
-  if (a.speak && !state.speaking && state.queue.length && now - speakEndedAt > 1500 && roomQuiet(1.5)) {
+  // auto-speak: one line at a time, a breath between lines; CT_SPEAK_POLITE=1 additionally waits for the room to be quiet
+  if (a.speak && !state.speaking && state.queue.length && now - speakEndedAt > 1500 && (process.env.CT_SPEAK_POLITE !== '1' || roomQuiet(1.5))) {
     const stale = state.queue.filter(q => (q.to === 'town' || !q.to) && now - q.ts > STALE_LINE * 1000);
     for (const q of stale) { state.queue.splice(state.queue.indexOf(q), 1); log(q.player, { dropped: 'stale', text: q.text }); }
     if (stale.length) save();
