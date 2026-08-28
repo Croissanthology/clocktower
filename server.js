@@ -680,10 +680,34 @@ const server = http.createServer(async (req, res) => {
       });
     return;
   }
+// snap near-miss spellings of roster names in a transcript to the real names, whatever the ASR engine
+// ("Margaret" → "Margot", "Alligater" → "Alligator"); names shorter than 4 letters are left alone (too many false hits)
+function similarity(a, b) {
+  a = a.toLowerCase(); b = b.toLowerCase();
+  if (a === b) return 1;
+  const m = a.length, n = b.length, d = Array.from({ length: m + 1 }, (_, i) => [i].concat(Array(n).fill(0)));
+  for (let j = 1; j <= n; j++) d[0][j] = j;
+  for (let i = 1; i <= m; i++) for (let j = 1; j <= n; j++)
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return 1 - d[m][n] / Math.max(m, n);
+}
+function fixNames(text) {
+  const names = ['Margot', 'Adam'].concat(state.players.map(p => p.name), state.humans.map(h => h.name)).filter(n => n && n.length >= 4);
+  if (!names.length) return text;
+  return text.replace(/[A-Za-z][A-Za-z'-]{2,}/g, w => {
+    let best = null, score = 0;
+    for (const n of names) { const sc = similarity(w, n); if (sc > score) { score = sc; best = n; } }
+    if (!best || score >= 1 || w[0].toLowerCase() !== best[0].toLowerCase()) return w;
+    const isName = /^[A-Z]/.test(w);        // capitalised mid-sentence words are far more likely to be names
+    if ((isName && score >= 0.6) || score >= 0.85) return best;
+    return w;
+  });
+}
+
   // live whisper transcription lands here: {mic: <1-based channel>, text: "..."}
   if (req.method === 'POST' && url.pathname === '/api/hear') {
     const b = await body(req);
-    const t = String(b.text || '').trim();
+    const t = fixNames(String(b.text || '').trim());
     const mic = +b.mic || 0;
     // echo guard: while an AI is speaking, table mics mostly pick up the AI's own speaker —
     // that text is already in context via delivery, so drop it instead of double-hearing it
