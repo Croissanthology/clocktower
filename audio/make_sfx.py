@@ -3,7 +3,7 @@
   bell.wav          dark bell rung before an AI speaks
   quill-N.wav       quill scratching on parchment
   creak-N.wav       old wood settling
-  chant-N.wav       a few syllables of ominous latin (kokoro, pitched down, reverbed)
+  (chant-N.wav are real public-domain gregorian phrases, cut by hand from archive.org — not generated here)
 
 Run:  audio/venv/bin/python audio/make_sfx.py
 """
@@ -83,22 +83,7 @@ def creak(dur=None):
     x *= np.clip(np.sin(np.pi * t / dur), 0, 1) ** 0.7 * (0.7 + 0.3 * rng.random(n) )
     return x
 
-# ---- chant: kokoro says latin, then ffmpeg drops it a fifth and drowns it in a stone room
-CHANTS = ["Memento mori.", "Sanguis in turre.", "Dies irae, dies illa.", "Libera nos a malo.",
-          "Requiem aeternam.", "Lux in tenebris.", "Fiat voluntas tua.", "Timor mortis conturbat me."]
-def chant(i, text):
-    raw = os.path.join(OUT, f"_chant-raw-{i}.wav")
-    dst = os.path.join(OUT, f"chant-{i}.wav")
-    r = subprocess.run([os.path.join(ROOT, "voices", "synth.sh"), "k-onyx", raw, text], capture_output=True, text=True)
-    if r.returncode: print("chant synth failed:", r.stderr); return
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", raw, "-af",
-        "asetrate=24000*0.62,aresample=44100,atempo=0.85,"
-        "aecho=0.8:0.85:90|180|330|520:0.45|0.35|0.25|0.15,"
-        "lowpass=f=1800,volume=0.9", "-ar", "44100", "-ac", "1", dst], check=True)
-    os.remove(raw); print("wrote", os.path.basename(dst))
-
 if __name__ == "__main__":
     write("bell.wav", bell())
     for i in range(4): write(f"quill-{i}.wav", quill(), peak=0.5)
     # creaks are real CC0 recordings (archive.org Red_Library_Creaks); procedural creak() kept for reference
-    # chants are now real public-domain Gregorian phrases (archive.org GregorianChantMass, ChantGregorian-KyrieEleison); chant() kept for reference

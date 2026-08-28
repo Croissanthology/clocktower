@@ -16,7 +16,7 @@ from scipy.io import wavfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SFX = os.path.join(HERE, "sfx")
-KINDS = {"quill": 5, "creak": 4, "chant": 2, "thunder": 2}   # relative frequency
+KINDS = {"quill": 5, "creak": 4, "chant": 1, "thunder": 2}   # relative frequency
 GAIN  = {"quill": 0.5, "creak": 0.6, "chant": 1.0, "thunder": 0.9}
 SR = 44100
 
@@ -28,7 +28,7 @@ ap.add_argument("--max-gap", type=float, default=25.0)
 ap.add_argument("--volume", type=float, default=1.0, help="master gain")
 ap.add_argument("--rain", type=float, default=0.35, help="rain bed gain (0 = no rain)")
 ap.add_argument("--no-clock", action="store_true")
-ap.add_argument("--clock", default="recorded", choices=["recorded", "synth"], help="which clock strike: recorded (ratchet+mechanism+bell) or synth (the original)")
+ap.add_argument("--clock", default="synth", choices=["recorded", "synth"], help="which clock strike: recorded (ratchet+mechanism+bell) or synth (the original)")
 a = ap.parse_args()
 
 if a.list:
