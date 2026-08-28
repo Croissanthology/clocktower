@@ -167,6 +167,10 @@ function renderCtx(entries) {
     return e.text;
   }).join('\n');
 }
+// every GAME line of the whole game (deaths, executions, nominations, phases) — short, authoritative, always present
+function gameLog() {
+  return state.ctx.filter(e => e.kind === 'phase').map(e => e.text).join('\n');
+}
 function recentCtx(p) {
   const cur = p.ctxCursor || 0;
   return renderCtx(state.ctx.slice(Math.max(0, cur - RECENT_N), cur));
@@ -198,6 +202,8 @@ function buildUserMessage(p, push) {
     parts.push(`=== your previous tick (tick ${last.turn}) — what you did ===\n${bits.join('\n')}`);
   }
   if (p.feedback) parts.push(`=== correction from last tick ===\n${p.feedback}`);
+  const glog = gameLog();
+  if (glog) parts.push(`=== the game so far — every official event, oldest first (authoritative; if your sheet disagrees, your sheet is wrong) ===\n${glog}`);
   if (push.recent) parts.push(`=== recent table talk, for orientation (you have seen this before) ===\n${push.recent}`);
   if (push.ctxText) parts.push(`=== heard since your last turn (live mics + AI speakers; may contain transcription errors) ===\n${push.ctxText}`);
   if (push.digest) parts.push(`=== your private whisper threads so far (only you and each whisperer know these) ===\n${push.digest}`);
@@ -465,7 +471,18 @@ function synthToFile(voice, text, outfile, cb) {
 }
 
 // playback: dedicated output channel on the mixer (UMC1820) when CT_AUDIO_DEVICE is set, else default output
+// --- remote playback: with CT_PLAY=remote, a play-agent (audio/play_agent.py) on the machine that owns the
+// interface polls /api/play/next, fetches the wav, plays it on the channel, and posts /api/play/done ---
+const REMOTE_PLAY = process.env.CT_PLAY === 'remote';
+let playJobs = [], playSeq = 0, agentSeen = 0;
+function remotePlay(file, channel, head, done) {
+  const job = { id: ++playSeq, file, channel, head: head || 0, rate: +PLAY_RATE, ts: Date.now(), done, timer: null };
+  job.timer = setTimeout(() => { if (playJobs.includes(job)) { playJobs.splice(playJobs.indexOf(job), 1); console.log('play-agent: job', job.id, 'timed out'); done(); } }, 90000);
+  playJobs.push(job);
+  speakChild = { kill: () => { clearTimeout(job.timer); const i = playJobs.indexOf(job); if (i >= 0) playJobs.splice(i, 1); } };
+}
 function playFile(file, channel, done) {
+  if (REMOTE_PLAY) return remotePlay(file, channel, 0, () => { speakChild = null; done(); });
   const finish = () => { speakChild = null; done(); };
   const py = path.join(ROOT, 'audio', 'venv', 'bin', 'python');
   const pc = path.join(ROOT, 'audio', 'play_channel.py');
@@ -485,6 +502,7 @@ function playFile(file, channel, done) {
 const BELL = path.join(ROOT, 'audio', 'sfx', 'bell.wav');
 function ringBell(channel, then) {
   if (process.env.CT_BELL === '0' || !fs.existsSync(BELL)) return then();
+  if (REMOTE_PLAY) return remotePlay(BELL, channel, 2.2, then);
   const py = path.join(ROOT, 'audio', 'venv', 'bin', 'python');
   const pc = path.join(ROOT, 'audio', 'play_channel.py');
   const args = process.env.CT_AUDIO_DEVICE && fs.existsSync(pc)
@@ -601,7 +619,9 @@ const TOKEN_FILE = path.join(GAME, 'token');
 let TOKEN = process.env.CT_TOKEN || '';
 if (!TOKEN) { try { TOKEN = fs.readFileSync(TOKEN_FILE, 'utf8').trim(); } catch (e) {} }
 if (!TOKEN) { TOKEN = require('crypto').randomBytes(6).toString('hex'); fs.writeFileSync(TOKEN_FILE, TOKEN); }
-const PUBLIC_PATHS = new Set(['/whisper', '/whisper.html', '/api/roster', '/api/whisper']);
+const PUBLIC_PATHS = new Set(['/whisper', '/whisper.html', '/api/roster', '/api/whisper',
+  '/api/hear', '/api/miclevels', '/api/play/next', '/api/play/done']);
+const OPEN = process.env.CT_OPEN === '1'; // trusted LAN: no token anywhere (adam's laptop drives transcription + playback)
 function wranglerUrl() { return `http://${lanIp()}:${PORT}/?k=${TOKEN}`; }
 
 const server = http.createServer(async (req, res) => {
@@ -610,7 +630,7 @@ const server = http.createServer(async (req, res) => {
   const local = /^(::1|::ffff:127\.0\.0\.1|127\.0\.0\.1)$/.test(req.socket.remoteAddress || '');
   const cookieTok = ((req.headers.cookie || '').match(/(?:^|;\s*)ct=([a-f0-9]+)/) || [])[1];
   const qTok = url.searchParams.get('k');
-  if (!local && !PUBLIC_PATHS.has(url.pathname) && qTok !== TOKEN && cookieTok !== TOKEN) {
+  if (!OPEN && !local && !PUBLIC_PATHS.has(url.pathname) && !url.pathname.startsWith('/api/play/file/') && qTok !== TOKEN && cookieTok !== TOKEN) {
     res.writeHead(403, { 'Content-Type': 'text/plain' }); return res.end('wrangler only');
   }
   if (qTok === TOKEN && !local) res.setHeader('Set-Cookie', `ct=${TOKEN}; Path=/; Max-Age=86400; SameSite=Lax`);
@@ -620,7 +640,8 @@ const server = http.createServer(async (req, res) => {
     return res.end(fs.readFileSync(path.join(ROOT, 'public', 'index.html')));
   }
   if (req.method === 'GET' && url.pathname === '/api/state') {
-    return send(200, { ...state, phaseLabel: phaseLabel(), rulesLoaded: fs.existsSync(RULES_FILE), model: MODEL, mics, lanUrl: `http://${lanIp()}:${PORT}/whisper`, wranglerUrl: wranglerUrl() });
+    return send(200, { ...state, phaseLabel: phaseLabel(), rulesLoaded: fs.existsSync(RULES_FILE), model: MODEL, mics, lanUrl: `http://${lanIp()}:${PORT}/whisper`, wranglerUrl: wranglerUrl(),
+      play: { remote: REMOTE_PLAY, agentAlive: REMOTE_PLAY && Date.now() - agentSeen < 5000, pending: playJobs.length } });
   }
   if (req.method === 'GET' && (url.pathname === '/hear' || url.pathname === '/hear.html')) {
     res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -789,6 +810,25 @@ function fixNames(text) {
       pushed = doPushTargets(targets, priv, true);
     }
     return send(200, { ok: true, text, pushed });
+  }
+  // play-agent protocol
+  if (req.method === 'GET' && url.pathname === '/api/play/next') {
+    agentSeen = Date.now();
+    const job = playJobs.find(j => !j.taken);
+    if (!job) return send(200, { job: null });
+    job.taken = Date.now();
+    return send(200, { job: { id: job.id, channel: job.channel, head: job.head, rate: job.rate, url: `/api/play/file/${job.id}` } });
+  }
+  if (req.method === 'GET' && url.pathname.startsWith('/api/play/file/')) {
+    const job = playJobs.find(j => j.id === +url.pathname.split('/').pop());
+    if (!job || !fs.existsSync(job.file)) return send(404, { err: 'no such job' });
+    res.writeHead(200, { 'Content-Type': 'audio/wav' }); return fs.createReadStream(job.file).pipe(res);
+  }
+  if (req.method === 'POST' && url.pathname === '/api/play/done') {
+    const b = await body(req);
+    const i = playJobs.findIndex(j => j.id === +b.id);
+    if (i >= 0) { const job = playJobs.splice(i, 1)[0]; clearTimeout(job.timer); job.done(); }
+    return send(200, { ok: true });
   }
   if (req.method === 'POST' && url.pathname === '/api/auto') {
     const b = await body(req);
