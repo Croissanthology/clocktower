@@ -222,10 +222,10 @@ function openrouterKey() {
   if (process.env.OPENROUTER_API_KEY) return process.env.OPENROUTER_API_KEY;
   try { return fs.readFileSync(path.join(ROOT, 'openrouter.key'), 'utf8').trim(); } catch (e) { return ''; }
 }
-function callOpenrouter(model, sysText, userMsg, cb, effort = EFFORT) {
+function callOpenrouter(model, sysText, userMsg, cb, effort = EFFORT, maxTokens = 8000) {
   const key = openrouterKey();
   if (!key) return cb(new Error('no openrouter key — paste it into clocktower/openrouter.key (one line) or set OPENROUTER_API_KEY'), '');
-  const bodyStr = JSON.stringify({ model, max_tokens: 8000, reasoning: { effort },
+  const bodyStr = JSON.stringify({ model, max_tokens: maxTokens, reasoning: { effort },
     messages: [{ role: 'system', content: sysText }, { role: 'user', content: userMsg }] });
   const req = https.request({ hostname: 'openrouter.ai', path: '/api/v1/chat/completions', method: 'POST',
     headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
@@ -266,7 +266,7 @@ function parseStreamJson(stdout) {
   return { text: text.trim(), thinking: thinking.trim() };
 }
 
-function callModel(p, msg, cb, effort = EFFORT) { // cb(err, raw, stderr, thinking)
+function callModel(p, msg, cb, effort = EFFORT, maxTokens = 8000) { // cb(err, raw, stderr, thinking)
   let model = p.model || MODEL;
   // "or:" prefix forces the openrouter path (visible chain of thought, billed to the key) —
   // otherwise anthropic models always ride the claude subscription, never the openrouter key
@@ -275,7 +275,7 @@ function callModel(p, msg, cb, effort = EFFORT) { // cb(err, raw, stderr, thinki
   else if (model.startsWith('anthropic/')) model = model.split('/')[1].replace(/:.*$/, '');
   const sysFile = sysPromptPath(p);
   if (model.includes('/')) {
-    callOpenrouter(model, fs.readFileSync(sysFile, 'utf8'), msg, cb, effort);
+    callOpenrouter(model, fs.readFileSync(sysFile, 'utf8'), msg, cb, effort, maxTokens);
     return null;
   }
   const args = ['-p', '--model', model, '--effort', effort,
@@ -374,7 +374,7 @@ function pendingWhispers(p) {
 // the exchange is written into the sheet's PRIVATE section so the next full tick knows. CT_WHISPER_QUICK=0 for the old full-tick path.
 const WHISPER_QUICK = process.env.CT_WHISPER_QUICK !== '0';
 function quickWhisper(p, pend) {
-  p.status = 'thinking'; save();
+  p.whispering = true; save();
   const byHuman = {};
   for (const w of pend) (byHuman[w.human] = byHuman[w.human] || []).push(w.text);
   const threads = Object.keys(byHuman).map(h => `— thread with ${h} —\n${renderWhispers(whisperThread(h, p.name).slice(-10))}`).join('\n\n');
@@ -386,7 +386,7 @@ function quickWhisper(p, pend) {
     `Answer now, in character, as ${p.name}: 1–3 plain sentences per person, spoken-word style. You may lie, deflect, bargain, or ask them something back. Do NOT reveal your role unless your STRATEGY says to. Reply with ONLY this JSON: {"whisper": [{"to": "<name>", "text": "..."}], "note": "one line for your PRIVATE section recording what they told you and what you answered"}`,
   ].join('\n\n');
   callModel(p, msg, (err, raw, stderr, thinking) => {
-    p.status = 'idle';
+    p.whispering = false;
     log(p.name, { quickWhisper: pend, raw, thinking: thinking || '', err: err ? String(err) : null });
     let out = null; try { out = extractJson(raw); } catch (e) {}
     if (!out) { // fall back to the full-tick path so nobody is left hanging
@@ -409,7 +409,7 @@ function quickWhisper(p, pend) {
     }
     save();
     drainWhispers(p); // anything that arrived meanwhile
-  }, 'low');
+  }, 'low', 900);
 }
 function fullWhisperTick(p) {
   const pend = pendingWhispers(p);
@@ -422,10 +422,10 @@ function fullWhisperTick(p) {
   pushToPlayer(p, push);
 }
 function drainWhispers(p) {
-  if (p.status === 'thinking') return;
   const pend = pendingWhispers(p);
   if (!pend.length) return;
-  if (WHISPER_QUICK) { for (const w of pend) w.pushed = true; return quickWhisper(p, pend); }
+  if (WHISPER_QUICK) { if (p.whispering) return; for (const w of pend) w.pushed = true; return quickWhisper(p, pend); }
+  if (p.status === 'thinking') return;
   for (const w of pend) w.pushed = true;
   state.turnN++;
   const push = { turnN: state.turnN, night: state.phase.time === 'night', label: phaseLabel(),
@@ -753,7 +753,7 @@ const server = http.createServer(async (req, res) => {
     if (!p || !state.humans.find(h => h.name === human)) return send(404, { err: 'no such pair' });
     const thread = whisperThread(human, ai).map(({ id, from, text, ts }) => ({ id, from, text, ts }));
     const waiting = thread.length > 0 && thread[thread.length - 1].from === 'human';
-    return send(200, { thread, thinking: waiting, status: p.status });
+    return send(200, { thread, thinking: waiting, status: p.whispering ? 'whispering' : p.status });
   }
   if (req.method === 'POST' && url.pathname === '/api/whisper') {
     const b = await body(req);
