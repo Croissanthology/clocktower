@@ -30,10 +30,17 @@ if [ "$1" = "--uninstall" ]; then launchctl bootout "gui/$(id -u)/com.clocktower
 
 out_sig() { /opt/homebrew/bin/SwitchAudioSource -c -t output 2>/dev/null; }
 last_out="$(out_sig)"
-# watchdog: default-output change → restart the player onto the new device
-( while true; do sleep 4; cur="$(out_sig)"; if [ "$cur" != "$last_out" ]; then echo "$(date +%H:%M:%S) output → $cur, restarting player" >> "$LOG"; last_out="$cur"; pkill -f "audio/ambience.py"; fi; done ) &
+# watchdog: default-output change OR a bluetooth speaker (re)connecting → restart the player onto the live link.
+# (a stream opened before a bluetooth flap keeps "playing" into the dead link forever; only a reopen fixes it)
+bt_sig() { system_profiler SPBluetoothDataType 2>/dev/null | awk '/Connected:/{c=$1} /Minor Type: Speaker/{print c}' | sort | uniq -c | tr -s ' \n' ' '; }
+last_bt="$(bt_sig)"
+( while true; do sleep 4; cur="$(out_sig)"; bt="$(bt_sig)"
+    if [ "$cur" != "$last_out" ] || [ "$bt" != "$last_bt" ]; then
+      echo "$(date +%H:%M:%S) output=$cur bt=[$bt] changed, restarting player" >> "$LOG"; last_out="$cur"; last_bt="$bt"
+      pkill -f "audio/ambien""ce.py"; osascript -e 'set volume output volume 100' >/dev/null 2>&1
+    fi; done ) &
 WD=$!
-trap 'kill $WD 2>/dev/null; pkill -f "audio/ambience.py"; exit' INT TERM
+trap 'kill $WD 2>/dev/null; pkill -f "audio/ambien""ce.py"; exit' INT TERM
 while true; do
   echo "$(date +%H:%M:%S) player start on: $(out_sig)" >> "$LOG"
   "$PY" -u "${ARGS[@]}" >> "$LOG" 2>&1

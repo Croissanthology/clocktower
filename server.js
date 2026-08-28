@@ -162,6 +162,7 @@ function ctxSlice(p) {
 
 // the last ~40 ctx entries before the cursor — already seen once, repeated so the player never goes in blind
 const RECENT_N = 40;
+const AI_WHISPER_BUDGET = +process.env.CT_AI_WHISPERS || 3;   // private notes an AI may send to other AIs per day/night
 function renderCtx(entries) {
   return entries.map(e => {
     if (e.kind === 'say') return `${e.player} (AI, aloud)${e.to && e.to !== 'town' ? ' to ' + e.to : ''}: ${e.text}`;
@@ -310,13 +311,25 @@ function pushToPlayer(p, push, attempt = 1) {
         if (out.action && out.action.type) p.action = { ...out.action, ts: Date.now(), seen: false };
         if (typeof out.ask === 'string' && out.ask.trim()) p.ask = { text: out.ask.trim(), ts: Date.now() };
         const ws = Array.isArray(out.whisper) ? out.whisper : (out.whisper && out.whisper.text ? [out.whisper] : []);
+        const aiTargets = [];
         for (const w of ws) {
           if (!w || !String(w.text || '').trim()) continue;
-          const to = state.humans.find(h => h.name.toLowerCase() === String(w.to || '').trim().toLowerCase())
+          const toName = String(w.to || '').trim().toLowerCase();
+          const to = state.humans.find(h => h.name.toLowerCase() === toName)
             || (push.whisper && push.whisper.length === 1 ? state.humans.find(h => h.name === push.whisper[0].human) : null);
-          if (!to) continue;
-          state.whispers.push({ id: ++state.seq, human: to.name, ai: p.name, from: 'ai', text: String(w.text).trim(), ts: Date.now() });
+          if (to) { state.whispers.push({ id: ++state.seq, human: to.name, ai: p.name, from: 'ai', text: String(w.text).trim(), ts: Date.now() }); continue; }
+          // another AI: a private machine-to-machine note, budgeted
+          const other = state.players.find(q => q.name.toLowerCase() === toName && q.name !== p.name);
+          if (!other) continue;
+          const day = phaseLabel();
+          p.aiWhispers = p.aiWhispers || {};
+          if ((p.aiWhispers[day] || 0) >= AI_WHISPER_BUDGET) { p.feedback = `your private note to ${other.name} was NOT delivered — you have used your ${AI_WHISPER_BUDGET} private notes for ${day}.`; continue; }
+          p.aiWhispers[day] = (p.aiWhispers[day] || 0) + 1;
+          // thread key: from the recipient's point of view the sender plays the "human" slot
+          state.whispers.push({ id: ++state.seq, human: p.name, ai: other.name, from: 'human', text: String(w.text).trim(), ts: Date.now(), aiToAi: true });
+          aiTargets.push(other);
         }
+        for (const other of aiTargets) setTimeout(() => drainWhispers(other), 50);
         const says = [];
         for (const u of Array.isArray(out.say) ? out.say : []) {
           if (!u || !u.text) continue;
@@ -349,8 +362,9 @@ function pushToPlayer(p, push, attempt = 1) {
 function pendingWhispers(p) {
   // human lines newer than the AI's last reply in each thread
   const out = [];
-  for (const h of state.humans) {
-    const t = whisperThread(h.name, p.name);
+  const senders = state.humans.map(h => h.name).concat(state.players.filter(q => q.name !== p.name).map(q => q.name));
+  for (const name of senders) {
+    const t = whisperThread(name, p.name);
     let i = t.length; while (i > 0 && t[i - 1].from === 'human') i--;
     for (const w of t.slice(i)) if (!w.pushed) out.push(w);
   }
