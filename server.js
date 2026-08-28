@@ -729,7 +729,7 @@ function fixNames(text) {
     let best = null, score = 0;
     for (const n of names) { const sc = similarity(w, n); if (sc > score) { score = sc; best = n; } }
     if (!best || score >= 1 || w[0].toLowerCase() !== best[0].toLowerCase()) return w;
-    const vocative = /^\s*[,!?]/.test(text.slice(off + w.length, off + w.length + 2));   // "Margaret, can we..." — addressed by name
+    const vocative = /^,/.test(text.slice(off + w.length, off + w.length + 1));   // "Margaret, can we..." — addressed by name
     const isName = /^[A-Z]/.test(w) && (!sentenceStart || vocative);   // a capital mid-sentence (or a vocative) is evidence of a name
     if ((isName && score >= 0.6) || score >= 0.85) return best;
     return w;
