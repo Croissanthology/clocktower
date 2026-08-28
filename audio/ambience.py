@@ -7,7 +7,7 @@ One output stream mixes three layers:
   bed     audio/sfx/rain.wav looped forever at --rain gain (0 = off)
   events  a random clip from audio/sfx/ (quill, creak, chant, thunder), weighted, one at a time,
           random gap between them
-  clock   audio/sfx/clock.wav struck on every real wall-clock minute (--no-clock to silence)
+  clock   audio/sfx/clock-recorded.wav (or --clock synth) struck on every real wall-clock minute (--no-clock to silence)
 Events and the clock never overlap each other; the rain runs under everything. Ctrl-C stops.
 """
 import argparse, glob, os, random, threading, time
@@ -28,6 +28,7 @@ ap.add_argument("--max-gap", type=float, default=25.0)
 ap.add_argument("--volume", type=float, default=1.0, help="master gain")
 ap.add_argument("--rain", type=float, default=0.35, help="rain bed gain (0 = no rain)")
 ap.add_argument("--no-clock", action="store_true")
+ap.add_argument("--clock", default="recorded", choices=["recorded", "synth"], help="which clock strike: recorded (ratchet+mechanism+bell) or synth (the original)")
 a = ap.parse_args()
 
 if a.list:
@@ -54,7 +55,8 @@ clips = {k: [load(f) for f in sorted(glob.glob(os.path.join(SFX, f"{k}-*.wav")))
 kinds = [k for k in KINDS if clips[k]]
 weights = [KINDS[k] for k in kinds]
 rain = load(os.path.join(SFX, "rain.wav")) if a.rain > 0 and os.path.exists(os.path.join(SFX, "rain.wav")) else None
-clock = load(os.path.join(SFX, "clock.wav")) if not a.no_clock and os.path.exists(os.path.join(SFX, "clock.wav")) else None
+clock_file = os.path.join(SFX, f"clock-{a.clock}.wav")
+clock = load(clock_file) if not a.no_clock and os.path.exists(clock_file) else None
 
 # --- mixer state (touched from the audio callback and the scheduler thread) ---
 lock = threading.Lock()
