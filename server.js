@@ -428,7 +428,7 @@ function micStart(device, channels) {
   // CT_ASR=parakeet spawns adam's transcribe_parakeet.py (silero-vad + parakeet-mlx) instead of whisper
   const parakeet = process.env.CT_ASR === 'parakeet';
   const args = parakeet
-    ? [path.join(ROOT, 'audio', 'transcribe_parakeet.py'), '--device', device, '--channels', String(channels), '--server', `http://localhost:${PORT}`]
+    ? ['-u', path.join(ROOT, 'audio', 'transcribe_parakeet.py'), '--device', device, '--channels', String(channels), '--server', `http://localhost:${PORT}`]
     : [path.join(ROOT, 'audio', 'transcribe.py'), '--device', device, '--channels', String(channels), '--server', `http://localhost:${PORT}`,
        '--threshold', process.env.CT_MIC_THRESHOLD || '0.02', '--prompt', micVocab()];
   mics.engine = parakeet ? 'parakeet' : 'whisper';

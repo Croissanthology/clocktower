@@ -228,9 +228,9 @@ let ui = { priv:{}, buffer:"", auto:false, secs:45, speakingId:null, speakingPla
   humanNames: ["","","","","","","",""],
   setupRows:[
     {on:false, name:"Alligator", model:"fable", role:"empath", persona:ALLIGATOR_PERSONA},
-    {on:false, name:"", model:"opus", role:"fortune teller", persona:""},
-    {on:false, name:"", model:"sonnet", role:"imp", persona:""},
-    {on:false, name:"", model:"claude-opus-4-6", role:"soldier", persona:""},
+    {on:false, name:"", model:"moonshotai/kimi-k3", role:"fortune teller", persona:""},
+    {on:false, name:"", model:"openai/gpt-5.6-sol", role:"imp", persona:""},
+    {on:false, name:"", model:"x-ai/grok-4.6", role:"soldier", persona:""},
   ]};
 
 async function api(p,d){ const r=await fetch(p,{method:d?"POST":"GET",headers:{"Content-Type":"application/json"},body:d?JSON.stringify(d):undefined}); return r.json(); }
