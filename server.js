@@ -1089,4 +1089,6 @@ function fixNames(text) {
   send(404, { err: 'not found' });
 });
 
+// after a restart, queued lines without audio go back into the synth line, oldest first
+setTimeout(() => { for (const q of state.queue) if (!q.file || !fs.existsSync(q.file)) preSynth(q); }, 500);
 server.listen(PORT, () => console.log(`clocktower wrangler on http://localhost:${PORT}  (model=${MODEL}, effort=${EFFORT})\n  phone/other laptops (wrangler, secret): ${wranglerUrl()}\n  side laptops (whisper, public):        http://${lanIp()}:${PORT}/whisper`));
