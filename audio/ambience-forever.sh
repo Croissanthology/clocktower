@@ -28,7 +28,7 @@ PL
 fi
 if [ "$1" = "--uninstall" ]; then launchctl bootout "gui/$(id -u)/com.clocktower.ambience"; pkill -f "audio/ambience.py"; echo stopped; exit; fi
 
-out_sig() { SwitchAudioSource -c -t output 2>/dev/null; }
+out_sig() { /opt/homebrew/bin/SwitchAudioSource -c -t output 2>/dev/null; }
 last_out="$(out_sig)"
 # watchdog: default-output change → restart the player onto the new device
 ( while true; do sleep 4; cur="$(out_sig)"; if [ "$cur" != "$last_out" ]; then echo "$(date +%H:%M:%S) output → $cur, restarting player" >> "$LOG"; last_out="$cur"; pkill -f "audio/ambience.py"; fi; done ) &
