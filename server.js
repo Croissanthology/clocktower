@@ -419,9 +419,14 @@ function micStart(device, channels) {
   if (micProc) return;
   mics = { running: true, device, channels, levels: [], speech_ago: [], ts: 0, err: '' };
   let errTail = '';
-  micProc = execFile(AUDIO_PY, [path.join(ROOT, 'audio', 'transcribe.py'),
-    '--device', device, '--channels', String(channels), '--server', `http://localhost:${PORT}`,
-    '--threshold', process.env.CT_MIC_THRESHOLD || '0.02', '--prompt', micVocab()],
+  // CT_ASR=parakeet spawns adam's transcribe_parakeet.py (silero-vad + parakeet-mlx) instead of whisper
+  const parakeet = process.env.CT_ASR === 'parakeet';
+  const args = parakeet
+    ? [path.join(ROOT, 'audio', 'transcribe_parakeet.py'), '--device', device, '--channels', String(channels), '--server', `http://localhost:${PORT}`]
+    : [path.join(ROOT, 'audio', 'transcribe.py'), '--device', device, '--channels', String(channels), '--server', `http://localhost:${PORT}`,
+       '--threshold', process.env.CT_MIC_THRESHOLD || '0.02', '--prompt', micVocab()];
+  mics.engine = parakeet ? 'parakeet' : 'whisper';
+  micProc = execFile(AUDIO_PY, args,
     { maxBuffer: 50 * 1024 * 1024 }, (err) => {
       micProc = null;
       mics.running = false;
@@ -433,7 +438,7 @@ function micStart(device, channels) {
 function micStop() {
   if (micProc) try { micProc.kill('SIGTERM'); } catch (e) {}
   // also catch transcribers this server process doesn't own (orphans from a restart, terminal runs)
-  execFile('pkill', ['-f', 'audio/transcribe.py'], () => {});
+  execFile('pkill', ['-f', 'audio/transcribe'], () => {});
   mics.running = false;
 }
 function voiceFor(idx, p) {
