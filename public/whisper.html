@@ -6,11 +6,11 @@
 <title>whisper</title>
 <style>
   :root { --bg:#0e0a0b; --panel:#161011; --panel2:#1f1617; --line:#3a2427; --ink:#e9dcc6; --dim:#8f7f74;
-    --ember:#7a1210; --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif; }
+    --ember:#9a1a10; --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif; }
   * { box-sizing:border-box; }
   html, body { height:100%; }
   body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.45 -apple-system, system-ui, sans-serif; overflow:hidden; }
-  #aura { position:fixed; inset:0; pointer-events:none; z-index:50; mix-blend-mode:screen; opacity:.5;
+  #aura { position:fixed; inset:0; pointer-events:none; z-index:50; mix-blend-mode:screen; opacity:.75;
     background:
       radial-gradient(120% 90% at 50% 115%, var(--ember) 0%, rgba(122,18,16,.35) 30%, transparent 62%),
       radial-gradient(70% 60% at 50% -20%, rgba(122,18,16,.5) 0%, transparent 60%);
@@ -26,6 +26,17 @@
   #frame i { right:-1px; top:-1px; border-left:none; border-bottom:none; }
   #frame b { left:-1px; bottom:-1px; border-right:none; border-top:none; }
 
+
+  /* candle: a warm, irregular glow from below; thunder: a rare cold flash from above */
+  #candle { position:fixed; inset:0; pointer-events:none; z-index:50; mix-blend-mode:screen;
+    background:radial-gradient(75% 55% at 50% 118%, rgba(255,120,30,.55) 0%, rgba(200,60,15,.3) 35%, transparent 65%);
+    animation:candle 2.9s ease-in-out infinite alternate, candle2 .61s steps(2,end) infinite; }
+  @keyframes candle { 0% { opacity:.55; transform:translateX(-1.5%) scaleY(1); } 40% { opacity:.9; transform:translateX(1%) scaleY(1.06); } 100% { opacity:.7; transform:translateX(.5%) scaleY(.97); } }
+  @keyframes candle2 { 0% { filter:brightness(1); } 50% { filter:brightness(.82); } 100% { filter:brightness(1.08); } }
+  #thunder { position:fixed; inset:0; pointer-events:none; z-index:52; background:rgba(210,220,255,.9); opacity:0; }
+  #thunder.hit { animation:thunder 1.1s steps(1,end); }
+  @keyframes thunder { 0% { opacity:.55 } 8% { opacity:0 } 14% { opacity:.8 } 20% { opacity:.1 } 26% { opacity:.4 } 36% { opacity:0 } 100% { opacity:0 } }
+  @media (prefers-reduced-motion:reduce) { #candle, #thunder { animation:none !important; } }
   .wrap { height:100%; display:flex; flex-direction:column; max-width:820px; margin:0 auto; padding:28px 24px 20px; gap:18px; }
   .wrap.pick { justify-content:center; gap:40px; padding-bottom:12vh; }
   .wrap.pick h1 { font-size:54px; }
@@ -61,7 +72,7 @@
 </style>
 </head>
 <body>
-<div id="aura"></div><div id="frame"><i></i><b></b></div>
+<div id="aura"></div><div id="candle"></div><div id="thunder"></div><div id="frame"><i></i><b></b></div>
 <div class="wrap" id="app"></div>
 <script>
 const COLORS = ["#8aa46a","#c9973f","#c8656e","#7d8fb3"];
@@ -140,6 +151,10 @@ document.addEventListener("keydown", holdWake, { passive:true });
 document.addEventListener("visibilitychange", ()=>{ if (document.visibilityState === "visible") holdWake(); });
 setInterval(holdWake, 30000);
 render(); poll();
+// thunder: a cold flash every 40–140 s, never twice in a row too soon
+(function(){ const t=document.getElementById("thunder"); function strike(){ t.classList.remove("hit"); void t.offsetWidth; t.classList.add("hit"); schedule(); }
+  function schedule(){ setTimeout(strike, 40000 + Math.random()*100000); } schedule(); })();
+
 </script>
 </body>
 </html>
