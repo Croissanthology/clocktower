@@ -318,7 +318,7 @@ function nav(name, ai){
         <textarea id="ctx-input" oninput="ui.buffer=this.value"
           onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();doPush()}"></textarea>
         <button class="on" style="height:44px" onclick="doPush()">push</button></div>
-      <div class="hint">! prefix = wrangler note</div>
+      <div class="hint">! prefix = wrangler note · # prefix = official game event (in every AI's game log forever; "executed"/"died" + an AI name marks it dead)</div>
     </div>`;
     const inp=document.getElementById("ctx-input");
     inp.value = ui.buffer; inp.focus();
@@ -710,13 +710,14 @@ async function doSetup(){
 }
 function splitBuffer(){
   const lines = ui.buffer.split("\n");
-  return { town: lines.filter(l=>!l.startsWith("!")).join("\n").trim(),
-           note: lines.filter(l=>l.startsWith("!")).map(l=>l.slice(1).trim()).join("\n") };
+  return { town: lines.filter(l=>!l.startsWith("!")&&!l.startsWith("#")).join("\n").trim(),
+           note: lines.filter(l=>l.startsWith("!")).map(l=>l.slice(1).trim()).join("\n"),
+           game: lines.filter(l=>l.startsWith("#")).map(l=>l.slice(1).trim()).filter(Boolean) };
 }
 async function doPush(){
   if (S.paused) { shakePause(); return; }
-  const {town,note} = splitBuffer();
-  await api("/api/push",{targets:S.players.map(p=>p.name), town, note, private:ui.priv});
+  const {town,note,game} = splitBuffer();
+  await api("/api/push",{targets:S.players.map(p=>p.name), town, note, game, private:ui.priv});
   ui.buffer=""; ui.priv={};
   for (const id of ["ctx-input","ping","ai-priv"]) { const el=document.getElementById(id); if(el) el.value=""; }
   S = await api("/api/state"); update();
