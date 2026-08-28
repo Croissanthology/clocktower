@@ -31,6 +31,7 @@ def play(job):
     rate = float(job.get("rate") or 1.0)
     if rate != 1.0:
         x = np.interp(np.arange(0, len(x), rate), np.arange(len(x)), x).astype("float32")
+    x = x * float(job.get("gain", 1.0))
     ch = max(1, min(nout, int(job["channel"])))
     out = np.zeros((len(x), nout), dtype="float32"); out[:, ch - 1] = x
     print(time.strftime("%H:%M:%S"), f"job {job['id']} → ch {ch} ({len(x)/sr:.1f}s)", flush=True)

@@ -99,6 +99,7 @@ def main():
     ap.add_argument("--rate", type=float, default=1.0, help="playback speed multiplier (default 1.0)")
     ap.add_argument("--list", action="store_true", help="list output devices and exit")
     ap.add_argument("--head", type=float, default=0, help="play only the first N seconds, with a short fade-out")
+    ap.add_argument("--gain", type=float, default=1.0, help="linear output gain (0-1 to attenuate)")
     args = ap.parse_args()
 
     if args.list:
@@ -144,6 +145,8 @@ def main():
         die(f"--rate must be positive (got {args.rate})")
     if args.rate != 1.0:
         data = resample_linear(data, args.rate)
+    if args.gain != 1.0:
+        data = (data * args.gain).astype("float32")
 
     # Build the zero matrix: N output channels, one carries the signal.
     n_frames = data.shape[0]

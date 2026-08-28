@@ -527,6 +527,9 @@ function renderMics(){
     ${S.mics && S.mics.check?`<pre style="font-size:12px;color:var(--dim);margin:0 0 10px;white-space:pre-wrap">${esc(S.mics.check)}</pre>`:""}
     <div style="border:1px solid var(--line);border-radius:10px;background:var(--panel)">${rows}</div>
     <h4 style="margin:18px 0 8px">speakers</h4>
+      <div class="mic-row"><span class="who">volume</span>
+        <input type="range" min="0" max="1" step="0.05" value="${S.volume??0.5}" style="flex:1;padding:0" oninput="api('/api/auto',{volume:+this.value})">
+        <span style="width:44px;text-align:right;color:var(--dim)">${Math.round((S.volume??0.5)*100)}%</span></div>
     <div style="border:1px solid var(--line);border-radius:10px;background:var(--panel)">${S.players.map((p,i)=>`<div class="mic-row">
       <span class="mdot" style="background:${COLORS[i%COLORS.length]}"></span>
       <span class="who">${esc(p.name)}</span>

@@ -29,7 +29,7 @@ const NIGHT_CHOOSERS = {
 
 fs.mkdirSync(GAME, { recursive: true });
 
-let state = { players: [], queue: [], ctx: [], humans: [], seats: [], whispers: [], auto: { tick: 'off', secs: 45, speak: false }, phase: { time: 'night', day: 1 }, hadFirstDay: false, turnN: 0, seq: 0, speaking: null, paused: false };
+let state = { players: [], queue: [], ctx: [], humans: [], seats: [], whispers: [], auto: { tick: 'off', secs: 45, speak: false }, volume: 0.5, phase: { time: 'night', day: 1 }, hadFirstDay: false, turnN: 0, seq: 0, speaking: null, paused: false };
 try {
   const disk = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
   state = Object.assign(state, disk);
@@ -50,6 +50,7 @@ try {
   if (state.hadFirstDay === undefined) state.hadFirstDay = true;
   if (!state.whispers) state.whispers = [];
   if (!state.auto) state.auto = { tick: 'off', secs: 45, speak: false };
+  if (state.volume === undefined) state.volume = 0.5;
   for (const p of state.players) {
     if (p.status === 'thinking') p.status = 'idle'; // a call in flight when the server died is gone; don't freeze the player out
     if (p.ctxCursor === undefined) p.ctxCursor = state.ctx.length;
@@ -484,7 +485,7 @@ function synthToFile(voice, text, outfile, cb) {
 const REMOTE_PLAY = process.env.CT_PLAY === 'remote';
 let playJobs = [], playSeq = 0, agentSeen = 0;
 function remotePlay(file, channel, head, done) {
-  const job = { id: ++playSeq, file, channel, head: head || 0, rate: +PLAY_RATE, ts: Date.now(), done, timer: null };
+  const job = { id: ++playSeq, file, channel, head: head || 0, rate: +PLAY_RATE, gain: state.volume, ts: Date.now(), done, timer: null };
   job.timer = setTimeout(() => { if (playJobs.includes(job)) { playJobs.splice(playJobs.indexOf(job), 1); console.log('play-agent: job', job.id, 'timed out'); done(); } }, 90000);
   playJobs.push(job);
   speakChild = { kill: () => { clearTimeout(job.timer); const i = playJobs.indexOf(job); if (i >= 0) playJobs.splice(i, 1); } };
@@ -496,13 +497,13 @@ function playFile(file, channel, done) {
   const pc = path.join(ROOT, 'audio', 'play_channel.py');
   if (process.env.CT_AUDIO_DEVICE && fs.existsSync(pc)) {
     speakChild = execFile(fs.existsSync(py) ? py : 'python3',
-      [pc, '--device', process.env.CT_AUDIO_DEVICE, '--channel', String(channel), '--rate', PLAY_RATE, file],
+      [pc, '--device', process.env.CT_AUDIO_DEVICE, '--channel', String(channel), '--rate', PLAY_RATE, '--gain', String(state.volume), file],
       { timeout: 60000 }, (err) => {
-        if (err) { speakChild = execFile('afplay', ['-r', PLAY_RATE, file], { timeout: 60000 }, finish); return; }
+        if (err) { speakChild = execFile('afplay', ['-r', PLAY_RATE, '-v', String(state.volume), file], { timeout: 60000 }, finish); return; }
         finish();
       });
   } else {
-    speakChild = execFile('afplay', ['-r', PLAY_RATE, file], { timeout: 60000 }, finish);
+    speakChild = execFile('afplay', ['-r', PLAY_RATE, '-v', String(state.volume), file], { timeout: 60000 }, finish);
   }
 }
 
@@ -514,8 +515,8 @@ function ringBell(channel, then) {
   const py = path.join(ROOT, 'audio', 'venv', 'bin', 'python');
   const pc = path.join(ROOT, 'audio', 'play_channel.py');
   const args = process.env.CT_AUDIO_DEVICE && fs.existsSync(pc)
-    ? [fs.existsSync(py) ? py : 'python3', [pc, '--device', process.env.CT_AUDIO_DEVICE, '--channel', String(channel), '--rate', PLAY_RATE, '--head', '2.2', BELL]]
-    : ['afplay', ['-t', '2.2', BELL]];
+    ? [fs.existsSync(py) ? py : 'python3', [pc, '--device', process.env.CT_AUDIO_DEVICE, '--channel', String(channel), '--rate', PLAY_RATE, '--head', '2.2', '--gain', String(state.volume * 0.8), BELL]]
+    : ['afplay', ['-t', '2.2', '-v', String(state.volume * 0.8), BELL]];
   speakChild = execFile(args[0], args[1], { timeout: 10000 }, () => then());
 }
 
@@ -840,7 +841,7 @@ function fixNames(text) {
     const job = playJobs.find(j => !j.taken);
     if (!job) return send(200, { job: null });
     job.taken = Date.now();
-    return send(200, { job: { id: job.id, channel: job.channel, head: job.head, rate: job.rate, url: `/api/play/file/${job.id}` } });
+    return send(200, { job: { id: job.id, channel: job.channel, head: job.head, rate: job.rate, gain: job.gain, url: `/api/play/file/${job.id}` } });
   }
   if (req.method === 'GET' && url.pathname.startsWith('/api/play/file/')) {
     const job = playJobs.find(j => j.id === +url.pathname.split('/').pop());
@@ -858,6 +859,7 @@ function fixNames(text) {
     if (['off', 'timer', 'lull'].includes(b.tick)) state.auto.tick = b.tick;
     if (+b.secs) state.auto.secs = +b.secs;
     if (b.speak !== undefined) state.auto.speak = !!b.speak;
+    if (b.volume !== undefined) state.volume = Math.max(0, Math.min(1, +b.volume || 0));
     save(); return send(200, { auto: state.auto });
   }
   if (req.method === 'POST' && url.pathname === '/api/setup') {
