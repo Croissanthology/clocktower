@@ -622,10 +622,16 @@ function speakQueued(id) {
   const ch = pl.channel || idx + 1;
   const startPlayback = (file) => playWithBell(file, ch, onDone);
   if (q.file && fs.existsSync(q.file)) startPlayback(q.file);
-  else synthToFile(voiceFor(idx, pl), q.text, path.join(GAME, `speech-${q.id}.wav`), (err, file) => {
-    if (err) { state.speaking = null; save(); return; }
-    startPlayback(file);
-  });
+  else {
+    // not synthesized yet: don't make the table wait 15 s for kokoro — the mac's own voice, now
+    const macVoices = ['Daniel', 'Samantha', 'Fred', 'Moira', 'Rishi', 'Karen'];
+    const aiff = path.join(GAME, `speech-${q.id}-say.aiff`);
+    execFile('say', ['-v', macVoices[idx % macVoices.length], '-o', aiff, q.text], { timeout: 20000 }, (err) => {
+      if (err) { state.speaking = null; save(); return; }
+      log(q.player, { fallbackVoice: 'say', id: q.id });
+      startPlayback(aiff);
+    });
+  }
   return { code: 200, body: { ok: true } };
 }
 
@@ -672,12 +678,22 @@ setInterval(() => {
   }
 }, 1000);
 
-// pre-synthesize a queued utterance so speak plays instantly, whatever the engine's latency
-function preSynth(q) {
+// pre-synthesize queued utterances ONE AT A TIME (parallel kokoro runs thrash the cpu and each takes 15 s instead of 3)
+const synthQueue = []; let synthBusy = false;
+function preSynth(q) { synthQueue.push(q); pumpSynth(); }
+function pumpSynth() {
+  if (synthBusy) return;
+  const q = synthQueue.shift(); if (!q) return;
+  if (!state.queue.includes(q) || q.file) return pumpSynth();   // dequeued or already done meanwhile
+  synthBusy = true;
+  doPreSynth(q, () => { synthBusy = false; pumpSynth(); });
+}
+function doPreSynth(q, next) {
   const idx = state.players.findIndex(p => p.name === q.player);
-  if (idx < 0) return;
+  if (idx < 0) return next();
   const out = path.join(GAME, `speech-${q.id}.wav`);
   synthToFile(voiceFor(idx, state.players[idx]), q.text, out, (err, file) => {
+    next();
     if (!err) { q.file = file; save(); }
   });
 }
