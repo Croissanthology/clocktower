@@ -712,6 +712,15 @@ function similarity(a, b) {
     d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
   return 1 - d[m][n] / Math.max(m, n);
 }
+const recentHears = []; // {ts, mic, key}
+function hearKey(t) { return t.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim(); }
+function isBleed(text, mic) {
+  const now = Date.now(), key = hearKey(text);
+  while (recentHears.length && now - recentHears[0].ts > 8000) recentHears.shift();
+  const dup = recentHears.some(h => h.mic !== mic && (h.key === key || h.key.includes(key) || key.includes(h.key) || similarity(h.key, key) >= 0.8));
+  if (!dup) recentHears.push({ ts: now, mic, key });
+  return dup;
+}
 function fixNames(text) {
   const names = ['Margot', 'Adam'].concat(state.players.map(p => p.name), state.humans.map(h => h.name)).filter(n => n && n.length >= 4);
   if (!names.length) return text;
@@ -720,7 +729,8 @@ function fixNames(text) {
     let best = null, score = 0;
     for (const n of names) { const sc = similarity(w, n); if (sc > score) { score = sc; best = n; } }
     if (!best || score >= 1 || w[0].toLowerCase() !== best[0].toLowerCase()) return w;
-    const isName = /^[A-Z]/.test(w) && !sentenceStart;   // a capital mid-sentence is evidence of a name; at sentence start it isn't
+    const vocative = /^\s*[,!?]/.test(text.slice(off + w.length, off + w.length + 2));   // "Margaret, can we..." — addressed by name
+    const isName = /^[A-Z]/.test(w) && (!sentenceStart || vocative);   // a capital mid-sentence (or a vocative) is evidence of a name
     if ((isName && score >= 0.6) || score >= 0.85) return best;
     return w;
   });
@@ -731,6 +741,8 @@ function fixNames(text) {
     const b = await body(req);
     const t = fixNames(String(b.text || '').trim());
     const mic = +b.mic || 0;
+    // bleed guard, whatever the engine: the same words arriving from another mic within a few seconds is one utterance, not two
+    if (t && isBleed(t, mic)) { recordHear(mic, t, 'bleed'); return send(200, { ok: true, dropped: 'bleed' }); }
     // echo guard: while an AI is speaking, table mics mostly pick up the AI's own speaker —
     // that text is already in context via delivery, so drop it instead of double-hearing it
     const guarded = (state.speaking || Date.now() - speakEndedAt < 2000) && process.env.CT_ECHO_GUARD !== '0';
