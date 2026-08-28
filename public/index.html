@@ -606,9 +606,10 @@ function update(){
     <span style="flex:1"></span>
     ${micWidget()}
     <button class="pause ${S.paused?"paused":""}" onclick="togglePause()">${S.paused?"PAUSED — resume":"pause"}</button>
-    <button class="${ui.auto?"on":""}" onclick="toggleAuto()">auto ${ui.secs}s</button>
-    <select style="width:74px" onchange="ui.secs=+this.value; if(ui.auto){toggleAuto();toggleAuto()}">
-      ${[30,45,60,90].map(x=>`<option ${x===ui.secs?"selected":""}>${x}</option>`).join("")}</select>
+    <button class="${(S.auto||{}).tick!=="off"?"on":""}" onclick="cycleAuto()" title="off → timer → lull">${({off:"auto off",timer:`auto ${(S.auto||{}).secs}s`,lull:"auto lull"})[(S.auto||{}).tick||"off"]}</button>
+    ${(S.auto||{}).tick==="timer"?`<select style="width:74px" onchange="api('/api/auto',{secs:+this.value})">
+      ${[30,45,60,90].map(x=>`<option ${x===(S.auto||{}).secs?"selected":""}>${x}</option>`).join("")}</select>`:""}
+    <button class="${(S.auto||{}).speak?"on":""}" onclick="api('/api/auto',{speak:!(S.auto||{}).speak}).then(poll0)" title="play queued lines when the room is quiet">auto-speak</button>
     <button class="ghost" onclick="nav('whispers')">whispers${(S.whispers||[]).length?` ${(S.whispers||[]).length}`:""}</button>
     <button class="ghost" onclick="nav('setup')">setup</button>`;
   // only touch the DOM when the bar actually changed — a rebuild every poll swallows taps that land mid-replace
@@ -745,11 +746,11 @@ async function dequeue(id,remove){
 }
 async function togglePause(){ const r=await api("/api/pause",{}); S.paused=r.paused; update(); }
 let autoTimer=null;
-function toggleAuto(){
-  ui.auto=!ui.auto; clearInterval(autoTimer);
-  if(ui.auto) autoTimer=setInterval(doPush, ui.secs*1000);
-  update();
+async function cycleAuto(){
+  const cur=(S.auto||{}).tick||"off"; const next={off:"timer",timer:"lull",lull:"off"}[cur];
+  await api("/api/auto",{tick:next}); poll0();
 }
+async function poll0(){ try{ S=await api("/api/state"); update(); }catch(e){} }
 
 // speech plays on the server (the machine the real speakers hang off); browser TTS fallback
 async function speak(id){

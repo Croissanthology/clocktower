@@ -29,7 +29,7 @@ const NIGHT_CHOOSERS = {
 
 fs.mkdirSync(GAME, { recursive: true });
 
-let state = { players: [], queue: [], ctx: [], humans: [], seats: [], whispers: [], phase: { time: 'night', day: 1 }, hadFirstDay: false, turnN: 0, seq: 0, speaking: null, paused: false };
+let state = { players: [], queue: [], ctx: [], humans: [], seats: [], whispers: [], auto: { tick: 'off', secs: 45, speak: false }, phase: { time: 'night', day: 1 }, hadFirstDay: false, turnN: 0, seq: 0, speaking: null, paused: false };
 try {
   const disk = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
   state = Object.assign(state, disk);
@@ -49,6 +49,7 @@ try {
   if (!state.seats) state.seats = state.players.map(p => p.name).concat(state.humans.map(h => h.name));
   if (state.hadFirstDay === undefined) state.hadFirstDay = true;
   if (!state.whispers) state.whispers = [];
+  if (!state.auto) state.auto = { tick: 'off', secs: 45, speak: false };
   for (const p of state.players) {
     if (p.ctxCursor === undefined) p.ctxCursor = state.ctx.length;
     if (!p.history) p.history = [];
@@ -471,6 +472,63 @@ function ringBell(channel, then) {
   speakChild = execFile(args[0], args[1], { timeout: 10000 }, () => then());
 }
 
+function speakQueued(id) {
+  const q = state.queue.find(x => x.id === id);
+  if (!q) return { code: 404, body: { err: 'gone' } };
+  if (state.speaking) return { code: 409, body: { err: 'already speaking' } };
+  const idx = state.players.findIndex(p => p.name === q.player);
+  const pl = state.players[idx] || {};
+  state.speaking = { id: q.id, player: q.player }; save();
+  const onDone = () => {
+    const wasStopped = !state.speaking || state.speaking.id !== q.id;
+    state.speaking = null; speakEndedAt = Date.now();
+    if (!wasStopped) deliverQueued(q.id); else save();
+  };
+  const ch = pl.channel || idx + 1;
+  const startPlayback = (file) => ringBell(ch, () => playFile(file, ch, onDone));
+  if (q.file && fs.existsSync(q.file)) startPlayback(q.file);
+  else synthToFile(voiceFor(idx, pl), q.text, path.join(GAME, `speech-${q.id}.wav`), (err, file) => {
+    if (err) { state.speaking = null; save(); return; }
+    startPlayback(file);
+  });
+  return { code: 200, body: { ok: true } };
+}
+
+// --- the scheduler: server-side auto ticks (timer or lull) and auto-speak, so it runs with no browser open ---
+// quiet = every live mic silent for `secs`; with no transcriber running the room counts as quiet
+function roomQuiet(secs) {
+  if (!mics.running || Date.now() - mics.ts > 5000) return true;
+  return (mics.speech_ago || []).every(a => a === null || a >= secs);
+}
+let lastAutoPush = 0, lastAutoCtxLen = 0;
+const LULL_QUIET = +process.env.CT_LULL_QUIET || 3;      // s of silence on every mic
+const LULL_MIN_GAP = +process.env.CT_LULL_MIN || 15;     // s between lull ticks
+const LULL_MAX_GAP = +process.env.CT_LULL_MAX || 90;     // tick anyway after this long
+const STALE_LINE = +process.env.CT_STALE || 90;          // s: undirected queued lines older than this are dropped
+setInterval(() => {
+  const now = Date.now();
+  const a = state.auto || {};
+  // ticks
+  if (a.tick !== 'off' && !state.paused && state.players.length) {
+    const since = (now - lastAutoPush) / 1000;
+    const fresh = state.ctx.length > lastAutoCtxLen;
+    const due = a.tick === 'timer' ? since >= (a.secs || 45)
+      : (since >= LULL_MIN_GAP && ((fresh && roomQuiet(LULL_QUIET) && !state.speaking) || since >= LULL_MAX_GAP));
+    if (due) {
+      const targets = state.players.filter(p => p.status !== 'thinking');
+      if (targets.length) { lastAutoPush = now; lastAutoCtxLen = state.ctx.length; doPushTargets(targets, {}); }
+    }
+  }
+  // auto-speak: oldest queued line, when the room is quiet and no AI is speaking
+  if (a.speak && !state.speaking && state.queue.length && now - speakEndedAt > 1500 && roomQuiet(1.5)) {
+    const stale = state.queue.filter(q => (q.to === 'town' || !q.to) && now - q.ts > STALE_LINE * 1000);
+    for (const q of stale) { state.queue.splice(state.queue.indexOf(q), 1); log(q.player, { dropped: 'stale', text: q.text }); }
+    if (stale.length) save();
+    const q = state.queue.find(x => x.file && fs.existsSync(x.file)) || state.queue[0];
+    if (q) speakQueued(q.id);
+  }
+}, 1000);
+
 // pre-synthesize a queued utterance so speak plays instantly, whatever the engine's latency
 function preSynth(q) {
   const idx = state.players.findIndex(p => p.name === q.player);
@@ -640,25 +698,15 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/speak') {
     const b = await body(req);
     if (b.stop) { if (speakChild) try { speakChild.kill('SIGKILL'); } catch (e) {} state.speaking = null; save(); return send(200, { ok: true }); }
-    const q = state.queue.find(x => x.id === b.id);
-    if (!q) return send(404, { err: 'gone' });
-    if (state.speaking) return send(409, { err: 'already speaking' });
-    const idx = state.players.findIndex(p => p.name === q.player);
-    const pl = state.players[idx] || {};
-    state.speaking = { id: q.id, player: q.player }; save();
-    const onDone = () => {
-      const wasStopped = !state.speaking || state.speaking.id !== q.id;
-      state.speaking = null; speakEndedAt = Date.now();
-      if (!wasStopped) deliverQueued(q.id); else save();
-    };
-    const ch = pl.channel || idx + 1;
-    const startPlayback = (file) => ringBell(ch, () => playFile(file, ch, onDone));
-    if (q.file && fs.existsSync(q.file)) startPlayback(q.file);
-    else synthToFile(voiceFor(idx, pl), q.text, path.join(GAME, `speech-${q.id}.wav`), (err, file) => {
-      if (err) { state.speaking = null; save(); return; }
-      startPlayback(file);
-    });
-    return send(200, { ok: true });
+    const r = speakQueued(b.id);
+    return send(r.code, r.body);
+  }
+  if (req.method === 'POST' && url.pathname === '/api/auto') {
+    const b = await body(req);
+    if (['off', 'timer', 'lull'].includes(b.tick)) state.auto.tick = b.tick;
+    if (+b.secs) state.auto.secs = +b.secs;
+    if (b.speak !== undefined) state.auto.speak = !!b.speak;
+    save(); return send(200, { auto: state.auto });
   }
   if (req.method === 'POST' && url.pathname === '/api/setup') {
     const b = await body(req);
