@@ -438,8 +438,16 @@ function micStart(device, channels) {
       mics.running = false;
       if (err && !err.killed) mics.err = (errTail.trim().split('\n').pop() || String(err)).slice(0, 200);
     });
-  micProc.stderr.on('data', d => { errTail = (errTail + d).slice(-2000); });
-  micProc.stdout.on('data', () => {});
+  // keep the transcriber's chatter: game/mic.log, and parakeet's one-shot input check surfaced in the mics panel
+  const micLog = fs.createWriteStream(path.join(GAME, 'mic.log'), { flags: 'a' });
+  let checkBuf = '';
+  const onData = d => {
+    micLog.write(d); errTail = (errTail + d).slice(-2000);
+    const t = String(d);
+    if (checkBuf || /input check/.test(t)) { checkBuf += t; if (checkBuf.length > 1500) checkBuf = checkBuf.slice(0, 1500); mics.check = checkBuf.slice(checkBuf.indexOf('input check')); }
+  };
+  micProc.stderr.on('data', onData);
+  micProc.stdout.on('data', onData);
 }
 function micStop() {
   if (micProc) try { micProc.kill('SIGTERM'); } catch (e) {}
