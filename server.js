@@ -878,13 +878,14 @@ function fixNames(text) {
       }
     }
     const used = {};
-    state.players = (b.players || []).slice(0, 4).map(p => {
+    const prevChannels = state.players.map(p => p.channel);   // speaker channels are hardware, not game: carry them over by seat
+    state.players = (b.players || []).slice(0, 4).map((p, i) => {
       const base = (p.model || MODEL).split('/').pop();
       used[base] = (used[base] || 0) + 1;
       const auto = used[base] > 1 ? `${base}-${used[base]}` : base;
       const name = (p.name || '').trim() || auto;
       const roleRules = extractRoleRules(p.role);
-      return { name, role: p.role || '?', alignment: p.alignment || 'good', model: p.model || '', voice: p.voice || '',
+      return { name, role: p.role || '?', alignment: p.alignment || 'good', model: p.model || '', voice: p.voice || '', channel: p.channel || prevChannels[i] || null,
         card: `Your secret character: ${p.role} (${p.alignment}).\n\n${roleRules || 'Your exact ability is in the rules above — reread it now.'}\n\n${p.persona || ''}`.trim(),
         status: 'idle', lastStatus: '', action: null, ask: null, parseError: null, feedback: '', ctxCursor: 0,
         sheet: `ME: ${name}, ${p.role} (${p.alignment}). ${p.persona || ''}\n\nREADS\n(none yet)\n\nPLAYERS\n(unknown yet)\n\nSTRATEGY (updated tick 0)\ngoal today: (none yet — set one at dawn)\nworking theory: (no reads yet)\nmy claim status: unclaimed; nobody knows what I am\nnext moves: listen for claims; decide who to test first\nif X then Y: (none yet)\n\nPRIVATE (whispered to me — never say aloud unless I decide to)\n(none yet)\n\nEVENTS\n(game not started)`,
@@ -899,6 +900,8 @@ function fixNames(text) {
     state.players.forEach(sysPromptPath);
     ctxAppend({ kind: 'phase', text: 'night 1 falls — the game begins' });
     save();
+    // the transcriber learns names at start: bounce it so the new roster is in its vocabulary
+    if (micProc) { const { device, channels } = mics; micStop(); setTimeout(() => micStart(device, channels), 1500); }
     pushNightChoosers();
     return send(200, { ok: true });
   }
