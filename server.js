@@ -16,7 +16,8 @@ const PORT = process.env.PORT || 4141;
 const MODEL = process.env.CT_MODEL || 'sonnet';
 const EFFORT = process.env.CT_EFFORT || 'medium'; // thinking on by default, both backends
 const TIMEOUT_MS = 120000;
-const PLAY_RATE = process.env.CT_RATE || '1.2';
+const PLAY_RATE_DEFAULT = process.env.CT_RATE || '1.0';
+const playRate = () => String(state.rate || PLAY_RATE_DEFAULT);
 
 // TB roles that CHOOSE at night (info roles just receive). firstNight: acts on night 1 too.
 const NIGHT_CHOOSERS = {
@@ -29,7 +30,7 @@ const NIGHT_CHOOSERS = {
 
 fs.mkdirSync(GAME, { recursive: true });
 
-let state = { players: [], queue: [], ctx: [], humans: [], seats: [], whispers: [], auto: { tick: 'off', secs: 45, speak: false }, volume: 0.5, phase: { time: 'night', day: 1 }, hadFirstDay: false, turnN: 0, seq: 0, speaking: null, paused: false };
+let state = { players: [], queue: [], ctx: [], humans: [], seats: [], whispers: [], auto: { tick: 'off', secs: 45, speak: false }, volume: 0.5, rate: 1.0, phase: { time: 'night', day: 1 }, hadFirstDay: false, turnN: 0, seq: 0, speaking: null, paused: false };
 try {
   const disk = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
   state = Object.assign(state, disk);
@@ -51,6 +52,7 @@ try {
   if (!state.whispers) state.whispers = [];
   if (!state.auto) state.auto = { tick: 'off', secs: 45, speak: false };
   if (state.volume === undefined) state.volume = 0.5;
+  if (state.rate === undefined) state.rate = +PLAY_RATE_DEFAULT;
   for (const p of state.players) {
     if (p.status === 'thinking') p.status = 'idle'; // a call in flight when the server died is gone; don't freeze the player out
     if (p.ctxCursor === undefined) p.ctxCursor = state.ctx.length;
@@ -485,7 +487,7 @@ function synthToFile(voice, text, outfile, cb) {
 const REMOTE_PLAY = process.env.CT_PLAY === 'remote';
 let playJobs = [], playSeq = 0, agentSeen = 0;
 function remotePlay(file, channel, head, done) {
-  const job = { id: ++playSeq, file, channel, head: head || 0, rate: +PLAY_RATE, gain: state.volume, ts: Date.now(), done, timer: null };
+  const job = { id: ++playSeq, file, channel, head: head || 0, rate: +playRate(), gain: state.volume, ts: Date.now(), done, timer: null };
   job.timer = setTimeout(() => { if (playJobs.includes(job)) { playJobs.splice(playJobs.indexOf(job), 1); console.log('play-agent: job', job.id, 'timed out'); done(); } }, 90000);
   playJobs.push(job);
   speakChild = { kill: () => { clearTimeout(job.timer); const i = playJobs.indexOf(job); if (i >= 0) playJobs.splice(i, 1); } };
@@ -497,13 +499,13 @@ function playFile(file, channel, done) {
   const pc = path.join(ROOT, 'audio', 'play_channel.py');
   if (process.env.CT_AUDIO_DEVICE && fs.existsSync(pc)) {
     speakChild = execFile(fs.existsSync(py) ? py : 'python3',
-      [pc, '--device', process.env.CT_AUDIO_DEVICE, '--channel', String(channel), '--rate', PLAY_RATE, '--gain', String(state.volume), file],
+      [pc, '--device', process.env.CT_AUDIO_DEVICE, '--channel', String(channel), '--rate', playRate(), '--gain', String(state.volume), file],
       { timeout: 60000 }, (err) => {
-        if (err) { speakChild = execFile('afplay', ['-r', PLAY_RATE, '-v', String(state.volume), file], { timeout: 60000 }, finish); return; }
+        if (err) { speakChild = execFile('afplay', ['-r', playRate(), '-v', String(state.volume), file], { timeout: 60000 }, finish); return; }
         finish();
       });
   } else {
-    speakChild = execFile('afplay', ['-r', PLAY_RATE, '-v', String(state.volume), file], { timeout: 60000 }, finish);
+    speakChild = execFile('afplay', ['-r', playRate(), '-v', String(state.volume), file], { timeout: 60000 }, finish);
   }
 }
 
@@ -515,7 +517,7 @@ function ringBell(channel, then) {
   const py = path.join(ROOT, 'audio', 'venv', 'bin', 'python');
   const pc = path.join(ROOT, 'audio', 'play_channel.py');
   const args = process.env.CT_AUDIO_DEVICE && fs.existsSync(pc)
-    ? [fs.existsSync(py) ? py : 'python3', [pc, '--device', process.env.CT_AUDIO_DEVICE, '--channel', String(channel), '--rate', PLAY_RATE, '--head', '2.2', '--gain', String(state.volume * 0.8), BELL]]
+    ? [fs.existsSync(py) ? py : 'python3', [pc, '--device', process.env.CT_AUDIO_DEVICE, '--channel', String(channel), '--rate', playRate(), '--head', '2.2', '--gain', String(state.volume * 0.8), BELL]]
     : ['afplay', ['-t', '2.2', '-v', String(state.volume * 0.8), BELL]];
   speakChild = execFile(args[0], args[1], { timeout: 10000 }, () => then());
 }
@@ -860,6 +862,7 @@ function fixNames(text) {
     if (+b.secs) state.auto.secs = +b.secs;
     if (b.speak !== undefined) state.auto.speak = !!b.speak;
     if (b.volume !== undefined) state.volume = Math.max(0, Math.min(1, +b.volume || 0));
+    if (b.rate !== undefined) state.rate = Math.max(0.6, Math.min(1.5, +b.rate || 1));
     save(); return send(200, { auto: state.auto });
   }
   if (req.method === 'POST' && url.pathname === '/api/setup') {
