@@ -599,7 +599,7 @@ function pushNightChoosers() {
   for (const p of choosers) {
     priv[p.name] = `night ${nightN()} has fallen. decide your night action NOW so it is ready the instant the storyteller wakes you: ${NIGHT_CHOOSERS[p.role].prompt} margot will silently show your decision to the storyteller when your turn comes. anything you learn in return may only reach you at dawn — margot avoids typing at night so as not to leak information to the table. wait patiently; it will come.`;
   }
-  doPushTargets(choosers, priv);
+  doPushTargets(choosers, priv, true);   // night wake-ups are the storyteller acting: they go through even while paused
 }
 
 function togglePhase() {
