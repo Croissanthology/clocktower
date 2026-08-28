@@ -55,6 +55,14 @@ try {
   if (state.rate === undefined) state.rate = +PLAY_RATE_DEFAULT;
   for (const p of state.players) {
     if (p.status === 'thinking') p.status = 'idle'; // a call in flight when the server died is gone; don't freeze the player out
+    p.whispering = false;
+  }
+  // whispers handed to a call that died with the server: un-flag them so they are re-sent
+  for (const w of state.whispers) if (w.from === 'human' && w.pushed) {
+    const later = state.whispers.some(x => x.human === w.human && x.ai === w.ai && x.from === 'ai' && x.ts > w.ts);
+    if (!later) w.pushed = false;
+  }
+  for (const p of []) {
     if (p.ctxCursor === undefined) p.ctxCursor = state.ctx.length;
     if (!p.history) p.history = [];
   }
@@ -635,6 +643,13 @@ const STALE_LINE = +process.env.CT_STALE || 90;          // s: undirected queued
 setInterval(() => {
   const now = Date.now();
   const a = state.auto || {};
+  // stranded-whisper watchdog: a human line flagged as sent, unanswered for 90 s, with its AI idle → send it again
+  for (const w of state.whispers) {
+    if (w.from !== 'human' || !w.pushed || now - w.ts < 90000) continue;
+    const answered = state.whispers.some(x => x.human === w.human && x.ai === w.ai && x.from === 'ai' && x.ts > w.ts);
+    const p = player(w.ai);
+    if (!answered && p && !p.whispering && p.status !== 'thinking') { w.pushed = false; log(p.name, { resend: w }); drainWhispers(p); }
+  }
   // ticks
   if (a.tick !== 'off' && !state.paused && state.players.length) {
     const since = (now - lastAutoPush) / 1000;
