@@ -132,6 +132,14 @@ async function poll(once){
   if (!once) pollTimer = setTimeout(poll, 1500);
   else pollTimer = setTimeout(poll, 1500);
 }
+// never let the terminal blink out: hold a screen wake lock (needs one user gesture first), re-acquire whenever the tab comes back
+let wake = null;
+async function holdWake(){ try { if (navigator.wakeLock && !wake) { wake = await navigator.wakeLock.request("screen"); wake.addEventListener("release", ()=>{ wake = null; }); } } catch(e) {} }
+document.addEventListener("click", holdWake, { passive:true });
+document.addEventListener("keydown", holdWake, { passive:true });
+document.addEventListener("visibilitychange", ()=>{ if (document.visibilityState === "visible") holdWake(); });
+setInterval(holdWake, 30000);
+// a silent, looping 1-pixel video is the belt to the wake-lock's braces on browsers that ignore it
 render(); poll();
 </script>
 </body>
