@@ -182,7 +182,9 @@ function buildUserMessage(p, push) {
   const head = push.night ? `--NIGHT-- ${push.label} · tick ${push.turnN} · the town is silent, eyes closed` : `--DAY-- ${push.label} · tick ${push.turnN}`;
   const parts = [
     head,
-    `reminder: you are ${p.name}, secretly the ${p.role} (${p.alignment}).`,
+    p.dead
+      ? `reminder: you are ${p.name}, and you are DEAD (you were the ${p.role}, ${p.alignment}). your ability is gone for good. you may still talk during the day and you still win with your team. you have ${p.ghostVote === false ? 'NO votes left — your ghost vote is spent' : 'exactly ONE ghost vote left for the rest of the game; spend it only when it decides something'}. you cannot nominate.`
+      : `reminder: you are ${p.name}, secretly the ${p.role} (${p.alignment}).`,
     `=== your sheet, exactly as you left it ===\n${p.sheet || '(empty — write it via edits with find:"")'}`,
   ];
   const last = p.history[p.history.length - 1];
@@ -483,7 +485,7 @@ function preSynth(q) {
 function pushNightChoosers() {
   const choosers = state.players.filter(p => {
     const c = NIGHT_CHOOSERS[p.role];
-    return c && (c.firstNight || nightN() > 1) && p.status !== 'thinking';
+    return c && !p.dead && (c.firstNight || nightN() > 1) && p.status !== 'thinking';
   });
   const priv = {};
   for (const p of choosers) {
@@ -719,6 +721,15 @@ const server = http.createServer(async (req, res) => {
     if (b.field === 'sheet') p.sheet = b.value;
     if (b.field === 'voice') p.voice = b.value;
     if (b.field === 'channel') p.channel = +b.value || null;
+    if (b.field === 'dead') {
+      const dead = !!b.value;
+      if (dead !== !!p.dead) {
+        p.dead = dead;
+        if (dead) { p.ghostVote = true; p.action = null; ctxAppend({ kind: 'phase', text: `${p.name} is dead` }); }
+        else ctxAppend({ kind: 'phase', text: `${p.name} is alive again (storyteller correction)` });
+      }
+    }
+    if (b.field === 'ghostVote') p.ghostVote = !!b.value;
     if (b.field === 'card') { p.card = b.value; sysPromptPath(p); }
     if (b.field === 'actionSeen' && p.action) p.action.seen = true;
     if (b.field === 'askSeen') p.ask = null;
