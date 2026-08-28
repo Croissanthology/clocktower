@@ -203,7 +203,7 @@ function buildUserMessage(p, push) {
   if (push.digest) parts.push(`=== your private whisper threads so far (only you and each whisperer know these) ===\n${push.digest}`);
   if (push.whisper) parts.push(`=== WHISPER — ${push.whisper.map(w => w.human).join(', ')} came to you privately. Nobody else hears this. ===\n${push.whisper.map(w => `${w.human} [whispering]: ${w.text}`).join('\n')}\n\nReply in the \`whisper\` field ({"to": "<name>", "text": "..."}, one per whisperer). Your whispered reply reaches ONLY them, as text on their screen — it is never spoken aloud. Keep \`say\` empty this tick unless the table genuinely needs something from you right now. Write anything you want to remember from this exchange into the PRIVATE section of your sheet.`);
   if (push.priv) parts.push(`=== MARGOT, PRIVATELY — only you receive this ===\n${push.priv}`);
-  parts.push(`=== respond now with the JSON contract only ===`);
+  parts.push(`=== before you answer: does anything above change your STRATEGY block? if yes, edit it this tick. then respond with the JSON contract only ===`);
   return parts.join('\n\n');
 }
 
@@ -758,7 +758,7 @@ const server = http.createServer(async (req, res) => {
       return { name, role: p.role || '?', alignment: p.alignment || 'good', model: p.model || '', voice: p.voice || '',
         card: `Your secret character: ${p.role} (${p.alignment}).\n\n${roleRules || 'Your exact ability is in the rules above — reread it now.'}\n\n${p.persona || ''}`.trim(),
         status: 'idle', lastStatus: '', action: null, ask: null, parseError: null, feedback: '', ctxCursor: 0,
-        sheet: `ME: ${name}, ${p.role} (${p.alignment}). ${p.persona || ''}\n\nREADS\n(none yet)\n\nPLAYERS\n(unknown yet)\n\nPRIVATE (whispered to me — never say aloud unless I decide to)\n(none yet)\n\nEVENTS\n(game not started)`,
+        sheet: `ME: ${name}, ${p.role} (${p.alignment}). ${p.persona || ''}\n\nREADS\n(none yet)\n\nPLAYERS\n(unknown yet)\n\nSTRATEGY (updated tick 0)\ngoal today: (none yet — set one at dawn)\nworking theory: (no reads yet)\nmy claim status: unclaimed; nobody knows what I am\nnext moves: listen for claims; decide who to test first\nif X then Y: (none yet)\n\nPRIVATE (whispered to me — never say aloud unless I decide to)\n(none yet)\n\nEVENTS\n(game not started)`,
         history: [],
       };
     });
