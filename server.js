@@ -621,7 +621,8 @@ if (!TOKEN) { try { TOKEN = fs.readFileSync(TOKEN_FILE, 'utf8').trim(); } catch 
 if (!TOKEN) { TOKEN = require('crypto').randomBytes(6).toString('hex'); fs.writeFileSync(TOKEN_FILE, TOKEN); }
 const PUBLIC_PATHS = new Set(['/whisper', '/whisper.html', '/api/roster', '/api/whisper',
   '/api/hear', '/api/miclevels', '/api/play/next', '/api/play/done']);
-const OPEN = process.env.CT_OPEN === '1'; // trusted LAN: no token anywhere (adam's laptop drives transcription + playback)
+const OPEN = process.env.CT_OPEN === '1';
+const portals = new Map(); // remote addr → last poll: which whisper terminals are alive // trusted LAN: no token anywhere (adam's laptop drives transcription + playback)
 function wranglerUrl() { return `http://${lanIp()}:${PORT}/?k=${TOKEN}`; }
 
 const server = http.createServer(async (req, res) => {
@@ -641,7 +642,8 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'GET' && url.pathname === '/api/state') {
     return send(200, { ...state, phaseLabel: phaseLabel(), rulesLoaded: fs.existsSync(RULES_FILE), model: MODEL, mics, lanUrl: `http://${lanIp()}:${PORT}/whisper`, wranglerUrl: wranglerUrl(),
-      play: { remote: REMOTE_PLAY, agentAlive: REMOTE_PLAY && Date.now() - agentSeen < 5000, pending: playJobs.length } });
+      play: { remote: REMOTE_PLAY, agentAlive: REMOTE_PLAY && Date.now() - agentSeen < 5000, pending: playJobs.length },
+      portals: [...portals].filter(([, t]) => Date.now() - t < 6000).map(([a]) => a.replace('::ffff:', '')) });
   }
   if (req.method === 'GET' && (url.pathname === '/hear' || url.pathname === '/hear.html')) {
     res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -653,6 +655,7 @@ const server = http.createServer(async (req, res) => {
     return res.end(fs.readFileSync(path.join(ROOT, 'public', 'whisper.html')));
   }
   if (req.method === 'GET' && url.pathname === '/api/roster') {
+    portals.set(req.socket.remoteAddress, Date.now());
     // deliberately narrow: names only, no roles, no sheets
     return send(200, { humans: state.humans.map(h => h.name), ais: state.players.map((p, i) => ({ name: p.name, idx: i })), phase: phaseLabel() });
   }
