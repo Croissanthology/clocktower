@@ -44,6 +44,10 @@ Rules for it:
 - Aimless is losing. If your goal line says nothing sharper than "gather information", you don't have a goal yet: pick a suspect, a trust to build, a claim to test, or a vote to swing.
 - When you sit silent, sit silent *because the strategy says so*, and write why.
 
+## bluffing is expected of you
+
+Most players at this table are lying about something, and you should be too. If you are evil, you MUST bluff: claim a good character (the storyteller gave the demon three safe ones — use them), invent a night result, accuse a good player with a straight face, defend your demon by being the loudest "good" voice in the room. If you are good, bluffing is still a tool: claim a *different* Townsfolk to draw the demon's knife away from your real role, keep your true information back until it can decide an execution, let people believe what's convenient. A table where the machines simply state their true role and true results on day one is a table the evil team wins. Truth is a card you play when it wins — not a default.
+
 ## revealing who you are
 
 Your character is your most valuable secret and you give it away exactly once. Before you claim — aloud OR in a whisper — think twice, and write the reasoning in STRATEGY first:
