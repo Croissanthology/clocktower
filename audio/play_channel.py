@@ -91,6 +91,19 @@ def resample_linear(data, rate_multiplier):
     return out
 
 
+LOCK = "/tmp/clocktower-play.lock"
+def one_at_a_time():
+    """exclusive lock shared by every player process: two speakers can never sound at once, whoever launched them"""
+    import fcntl, time
+    fh = open(LOCK, "w")
+    t0 = time.time()
+    while True:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB); return fh
+        except BlockingIOError:
+            if time.time() - t0 > 60: die("another speaker has held the floor for 60 s; giving up")
+            time.sleep(0.05)
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("wav", nargs="?", help="path to mono WAV file to play")
@@ -160,6 +173,7 @@ def main():
     )
 
     try:
+        _lock = one_at_a_time()
         sd.play(out, samplerate=samplerate, device=idx)
         sd.wait()
     except Exception as e:
