@@ -230,7 +230,7 @@ let ui = { priv:{}, buffer:"", auto:false, secs:45, speakingId:null, speakingPla
     {on:false, name:"Alligator", model:"fable", role:"empath", persona:ALLIGATOR_PERSONA},
     {on:false, name:"", model:"opus", role:"fortune teller", persona:""},
     {on:false, name:"", model:"sonnet", role:"imp", persona:""},
-    {on:false, name:"", model:"haiku", role:"soldier", persona:""},
+    {on:false, name:"", model:"claude-opus-4-6", role:"soldier", persona:""},
   ]};
 
 async function api(p,d){ const r=await fetch(p,{method:d?"POST":"GET",headers:{"Content-Type":"application/json"},body:d?JSON.stringify(d):undefined}); return r.json(); }
@@ -379,7 +379,7 @@ function nav(name, ai){
       <div style="display:flex;gap:8px;margin-top:6px"><button class="on" style="flex:1;padding:10px" onclick="doSetup()">deal</button>
         ${S.players.length?`<button onclick="saveSeats()">save seats only</button><button onclick="saveMics()">save mics only</button><button onclick="nav('home')">cancel</button>`:""}</div>
       <div class="hint">dealing resets the game (starts at night 1). disk logs are kept.<br>
-      model: sonnet / haiku / opus run on the claude subscription; anything with a slash (e.g. openai/gpt-5.1) runs via openrouter.</div>
+      model: fable / opus (5) / sonnet (5) / claude-opus-4-6 / haiku run on the claude subscription, thinking on; anything with a slash runs via openrouter (key needed).</div>
       <datalist id="model-list"></datalist></div>`;
     loadModels(); renderSeating();
   }
@@ -470,7 +470,7 @@ async function saveSeats(){
 function setHumanCount(n){ ui.humanCount=n; while(ui.humanNames.length<n) ui.humanNames.push(""); nav("setup"); }
 async function loadModels(){
   const dl=document.getElementById("model-list"); if(!dl) return;
-  const local=["sonnet","haiku","opus"];
+  const local=["fable","opus","sonnet","claude-opus-4-6","haiku"];   // subscription models: fable 5, opus 5, sonnet 5, opus 4.6, haiku 4.5
   try { const r=await api("/api/models");
     dl.innerHTML = local.concat(r.models||[]).map(m=>`<option value="${esc(m)}">`).join("");
   } catch(e){ dl.innerHTML = local.map(m=>`<option value="${esc(m)}">`).join(""); }
