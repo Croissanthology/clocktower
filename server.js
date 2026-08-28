@@ -761,7 +761,9 @@ const server = http.createServer(async (req, res) => {
     return res.end(fs.readFileSync(path.join(ROOT, 'public', 'index.html')));
   }
   if (req.method === 'GET' && url.pathname === '/api/state') {
-    return send(200, { ...state, phaseLabel: phaseLabel(), rulesLoaded: fs.existsSync(RULES_FILE), model: MODEL, mics, lanUrl: `http://${lanIp()}:${PORT}/whisper`, wranglerUrl: wranglerUrl(),
+    // the poll is every 1.2 s from several screens: ship only what the screens draw (recent history, no prompt bodies past the last 3)
+    const players = state.players.map(p => ({ ...p, history: p.history.slice(-8).map((h, i, arr) => i < arr.length - 3 ? { ...h, input: '', thinking: '' } : h) }));
+    return send(200, { ...state, players, ctx: state.ctx.slice(-300), phaseLabel: phaseLabel(), rulesLoaded: fs.existsSync(RULES_FILE), model: MODEL, mics, lanUrl: `http://${lanIp()}:${PORT}/whisper`, wranglerUrl: wranglerUrl(),
       play: { remote: REMOTE_PLAY, agentAlive: REMOTE_PLAY && Date.now() - agentSeen < 5000, pending: playJobs.length },
       portals: [...portals].filter(([, t]) => Date.now() - t < 6000).map(([a]) => a.replace('::ffff:', '')) });
   }
