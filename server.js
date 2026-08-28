@@ -222,10 +222,10 @@ function openrouterKey() {
   if (process.env.OPENROUTER_API_KEY) return process.env.OPENROUTER_API_KEY;
   try { return fs.readFileSync(path.join(ROOT, 'openrouter.key'), 'utf8').trim(); } catch (e) { return ''; }
 }
-function callOpenrouter(model, sysText, userMsg, cb) {
+function callOpenrouter(model, sysText, userMsg, cb, effort = EFFORT) {
   const key = openrouterKey();
   if (!key) return cb(new Error('no openrouter key — paste it into clocktower/openrouter.key (one line) or set OPENROUTER_API_KEY'), '');
-  const bodyStr = JSON.stringify({ model, max_tokens: 8000, reasoning: { effort: EFFORT },
+  const bodyStr = JSON.stringify({ model, max_tokens: 8000, reasoning: { effort },
     messages: [{ role: 'system', content: sysText }, { role: 'user', content: userMsg }] });
   const req = https.request({ hostname: 'openrouter.ai', path: '/api/v1/chat/completions', method: 'POST',
     headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
@@ -266,7 +266,7 @@ function parseStreamJson(stdout) {
   return { text: text.trim(), thinking: thinking.trim() };
 }
 
-function callModel(p, msg, cb) { // cb(err, raw, stderr, thinking)
+function callModel(p, msg, cb, effort = EFFORT) { // cb(err, raw, stderr, thinking)
   let model = p.model || MODEL;
   // "or:" prefix forces the openrouter path (visible chain of thought, billed to the key) —
   // otherwise anthropic models always ride the claude subscription, never the openrouter key
@@ -275,10 +275,10 @@ function callModel(p, msg, cb) { // cb(err, raw, stderr, thinking)
   else if (model.startsWith('anthropic/')) model = model.split('/')[1].replace(/:.*$/, '');
   const sysFile = sysPromptPath(p);
   if (model.includes('/')) {
-    callOpenrouter(model, fs.readFileSync(sysFile, 'utf8'), msg, cb);
+    callOpenrouter(model, fs.readFileSync(sysFile, 'utf8'), msg, cb, effort);
     return null;
   }
-  const args = ['-p', '--model', model, '--effort', EFFORT,
+  const args = ['-p', '--model', model, '--effort', effort,
     '--system-prompt-file', sysFile, '--no-session-persistence', '--disallowedTools', '*',
     '--output-format', 'stream-json', '--verbose'];
   const child = execFile('claude', args, { cwd: GAME, timeout: TIMEOUT_MS, maxBuffer: 50 * 1024 * 1024 },
@@ -370,10 +370,62 @@ function pendingWhispers(p) {
   }
   return out;
 }
+// quick whisper: a lean, low-thinking query per whisper — briefing + sheet + the thread, plain-text answer.
+// the exchange is written into the sheet's PRIVATE section so the next full tick knows. CT_WHISPER_QUICK=0 for the old full-tick path.
+const WHISPER_QUICK = process.env.CT_WHISPER_QUICK !== '0';
+function quickWhisper(p, pend) {
+  p.status = 'thinking'; save();
+  const byHuman = {};
+  for (const w of pend) (byHuman[w.human] = byHuman[w.human] || []).push(w.text);
+  const threads = Object.keys(byHuman).map(h => `— thread with ${h} —\n${renderWhispers(whisperThread(h, p.name).slice(-10))}`).join('\n\n');
+  const msg = [
+    `WHISPER — ${phaseLabel()}. ${Object.keys(byHuman).join(', ')} came to you privately at the laptop. Nobody else sees this exchange.`,
+    `=== the game so far ===\n${gameLog() || '(nothing yet)'}`,
+    `=== your sheet ===\n${p.sheet}`,
+    `=== the private thread(s), newest last ===\n${threads}`,
+    `Answer now, in character, as ${p.name}: 1–3 plain sentences per person, spoken-word style. You may lie, deflect, bargain, or ask them something back. Do NOT reveal your role unless your STRATEGY says to. Reply with ONLY this JSON: {"whisper": [{"to": "<name>", "text": "..."}], "note": "one line for your PRIVATE section recording what they told you and what you answered"}`,
+  ].join('\n\n');
+  callModel(p, msg, (err, raw, stderr, thinking) => {
+    p.status = 'idle';
+    log(p.name, { quickWhisper: pend, raw, thinking: thinking || '', err: err ? String(err) : null });
+    let out = null; try { out = extractJson(raw); } catch (e) {}
+    if (!out) { // fall back to the full-tick path so nobody is left hanging
+      for (const w of pend) w.pushed = false;
+      save(); return fullWhisperTick(p);
+    }
+    const ws = Array.isArray(out.whisper) ? out.whisper : (out.whisper && out.whisper.text ? [out.whisper] : []);
+    for (const w of ws) {
+      if (!w || !String(w.text || '').trim()) continue;
+      const toName = String(w.to || '').trim().toLowerCase();
+      const to = state.humans.find(h => h.name.toLowerCase() === toName) || state.players.find(q => q.name.toLowerCase() === toName)
+        || (pend.length && !toName ? { name: pend[0].human } : null);
+      if (!to) continue;
+      state.whispers.push({ id: ++state.seq, human: to.name, ai: p.name, from: 'ai', text: String(w.text).trim(), ts: Date.now() });
+    }
+    if (typeof out.note === 'string' && out.note.trim()) {
+      const line = `- ${phaseLabel()}: ${out.note.trim()}`;
+      if (p.sheet.includes('PRIVATE (whispered')) p.sheet = p.sheet.replace(/(PRIVATE \(whispered[^\n]*\n)/, `$1${line}\n`);
+      else p.sheet += `\n\nPRIVATE\n${line}`;
+    }
+    save();
+    drainWhispers(p); // anything that arrived meanwhile
+  }, 'low');
+}
+function fullWhisperTick(p) {
+  const pend = pendingWhispers(p);
+  if (!pend.length) return;
+  for (const w of pend) w.pushed = true;
+  state.turnN++;
+  const push = { turnN: state.turnN, night: state.phase.time === 'night', label: phaseLabel(),
+    recent: recentCtx(p), ctxText: ctxSlice(p), digest: whisperDigest(p),
+    whisper: pend.map(w => ({ human: w.human, text: w.text })) };
+  pushToPlayer(p, push);
+}
 function drainWhispers(p) {
   if (p.status === 'thinking') return;
   const pend = pendingWhispers(p);
   if (!pend.length) return;
+  if (WHISPER_QUICK) { for (const w of pend) w.pushed = true; return quickWhisper(p, pend); }
   for (const w of pend) w.pushed = true;
   state.turnN++;
   const push = { turnN: state.turnN, night: state.phase.time === 'night', label: phaseLabel(),
