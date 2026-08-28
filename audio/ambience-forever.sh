@@ -8,7 +8,7 @@
 cd "$(dirname "$0")/.." || exit 1
 LOG=/tmp/ambience.log
 PY=audio/venv/bin/python
-ARGS=(audio/ambience.py --rain 0.8)          # no --device: default output
+ARGS=(audio/ambience.py --rain 1.0 --min-gap 3 --max-gap 10)          # no --device: default output
 
 if [ "$1" = "--install" ]; then
   P=~/Library/LaunchAgents/com.clocktower.ambience.plist
