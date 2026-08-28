@@ -694,11 +694,12 @@ function similarity(a, b) {
 function fixNames(text) {
   const names = ['Margot', 'Adam'].concat(state.players.map(p => p.name), state.humans.map(h => h.name)).filter(n => n && n.length >= 4);
   if (!names.length) return text;
-  return text.replace(/[A-Za-z][A-Za-z'-]{2,}/g, w => {
+  return text.replace(/[A-Za-z][A-Za-z'-]{2,}/g, (w, off) => {
+    const sentenceStart = off === 0 || /[.!?]\s*$/.test(text.slice(Math.max(0, off - 3), off));
     let best = null, score = 0;
     for (const n of names) { const sc = similarity(w, n); if (sc > score) { score = sc; best = n; } }
     if (!best || score >= 1 || w[0].toLowerCase() !== best[0].toLowerCase()) return w;
-    const isName = /^[A-Z]/.test(w);        // capitalised mid-sentence words are far more likely to be names
+    const isName = /^[A-Z]/.test(w) && !sentenceStart;   // a capital mid-sentence is evidence of a name; at sentence start it isn't
     if ((isName && score >= 0.6) || score >= 0.85) return best;
     return w;
   });
