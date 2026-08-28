@@ -536,6 +536,17 @@ function ringBell(channel, then) {
   speakChild = execFile(args[0], args[1], { timeout: 10000 }, () => then());
 }
 
+// bell + line stitched into ONE file so a single playback process starts (two process spin-ups cost ~2 s of dead air)
+function playWithBell(file, channel, done) {
+  if (process.env.CT_BELL === '0' || !fs.existsSync(BELL) || REMOTE_PLAY) return ringBell(channel, () => playFile(file, channel, done));
+  const out = file.replace(/\.(wav|aiff)$/, '') + '-bell.wav';
+  execFile('ffmpeg', ['-y', '-loglevel', 'error', '-i', BELL, '-i', file, '-filter_complex',
+    '[0:a]atrim=0:2.0,afade=t=out:st=1.5:d=0.5,volume=0.7,aformat=sample_rates=24000:channel_layouts=mono[b];[1:a]aformat=sample_rates=24000:channel_layouts=mono[v];[b][v]concat=n=2:v=0:a=1',
+    out], { timeout: 15000 }, (err) => {
+    if (err) return ringBell(channel, () => playFile(file, channel, done));
+    playFile(out, channel, done);
+  });
+}
 function speakQueued(id) {
   const q = state.queue.find(x => x.id === id);
   if (!q) return { code: 404, body: { err: 'gone' } };
@@ -549,7 +560,7 @@ function speakQueued(id) {
     if (!wasStopped) deliverQueued(q.id); else save();
   };
   const ch = pl.channel || idx + 1;
-  const startPlayback = (file) => ringBell(ch, () => playFile(file, ch, onDone));
+  const startPlayback = (file) => playWithBell(file, ch, onDone);
   if (q.file && fs.existsSync(q.file)) startPlayback(q.file);
   else synthToFile(voiceFor(idx, pl), q.text, path.join(GAME, `speech-${q.id}.wav`), (err, file) => {
     if (err) { state.speaking = null; save(); return; }
@@ -814,7 +825,7 @@ function fixNames(text) {
     const text = `I am ${pl.name}. This is my speaker, on channel ${channel}.`;
     synthToFile(voiceFor(idx, pl), text, path.join(GAME, `speech-test-${idx}.wav`), (err, file) => {
       if (err) { state.speaking = null; return; }
-      ringBell(channel, () => playFile(file, channel, () => { state.speaking = null; speakEndedAt = Date.now(); }));
+      playWithBell(file, channel, () => { state.speaking = null; speakEndedAt = Date.now(); });
     });
     return send(200, { ok: true, channel });
   }
