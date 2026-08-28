@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hear</title>
+<style>
+  :root { --bg:#0e0a0b; --panel:#161011; --panel2:#1f1617; --line:#3a2427; --ink:#e9dcc6; --dim:#8f7f74;
+    --good:#7fb069; --bad:#d0706a; --ember:#7a1210;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,"Book Antiqua",Georgia,serif;
+    --mono:ui-monospace, Menlo, monospace; }
+  * { box-sizing:border-box; }
+  html, body { height:100%; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 -apple-system, system-ui, sans-serif; overflow:hidden; }
+  #aura { position:fixed; inset:0; pointer-events:none; z-index:50; mix-blend-mode:screen; opacity:.42;
+    background:
+      radial-gradient(120% 90% at 50% 115%, var(--ember) 0%, rgba(122,18,16,.32) 30%, transparent 62%),
+      radial-gradient(70% 60% at 50% -20%, rgba(122,18,16,.45) 0%, transparent 60%);
+    animation:breathe 7.3s ease-in-out infinite; }
+  @keyframes breathe { 0%,100% { opacity:.42 } 38% { opacity:.34 } 64% { opacity:.48 } }
+  #frame { position:fixed; inset:7px; pointer-events:none; z-index:51; border:1px solid rgba(233,220,198,.16); }
+  #frame i, #frame b, #frame::before, #frame::after { content:""; position:absolute; width:20px; height:20px; border:1px solid rgba(233,220,198,.7); }
+  #frame::before { left:-1px; top:-1px; border-right:none; border-bottom:none; }
+  #frame::after { right:-1px; bottom:-1px; border-left:none; border-top:none; }
+  #frame i { right:-1px; top:-1px; border-left:none; border-bottom:none; }
+  #frame b { left:-1px; bottom:-1px; border-right:none; border-top:none; }
+  @media (prefers-reduced-motion:reduce) { #aura { animation:none } }
+
+  .wrap { height:100%; display:flex; flex-direction:column; padding:22px 26px 16px; gap:14px; position:relative; z-index:1; }
+  header { display:flex; align-items:flex-end; gap:18px; border-bottom:1px solid var(--line); padding-bottom:10px; flex-wrap:wrap; }
+  h1 { margin:0; font:italic 600 30px/1 var(--serif); letter-spacing:.01em; }
+  h1 small { display:block; font:400 12px/1.4 -apple-system, system-ui, sans-serif; color:var(--dim);
+             letter-spacing:.12em; text-transform:uppercase; margin-top:7px; }
+  .pills { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-left:auto; }
+  .pill { border:1px solid var(--line); background:var(--panel2); border-radius:999px; padding:5px 12px;
+          font:500 12px/1 -apple-system, system-ui, sans-serif; letter-spacing:.04em; color:var(--dim); white-space:nowrap; }
+  .pill b { color:var(--ink); font-weight:600; }
+  .pill.live { border-color:#4b7a3c; color:#a9cf94; }
+  .pill.off { border-color:#7a3430; color:var(--bad); }
+  .pill.warn { border-color:#7a6a24; color:#d9b84a; }
+
+  .cols { flex:1; display:flex; gap:18px; min-height:0; }
+  aside { width:290px; flex-shrink:0; display:flex; flex-direction:column; gap:8px; overflow-y:auto; }
+  .lane { border:1px solid var(--line); border-radius:10px; background:var(--panel); padding:9px 11px; cursor:pointer;
+          display:flex; flex-direction:column; gap:7px; }
+  .lane:hover { border-color:var(--dim); }
+  .lane.sel { border-color:var(--c); background:var(--panel2); }
+  .lane.dim { opacity:.45; }
+  .lane .top { display:flex; align-items:center; gap:8px; }
+  .lane .dot { width:9px; height:9px; border-radius:50%; background:var(--dim); flex-shrink:0; }
+  .lane.hot .dot { background:var(--good); box-shadow:0 0 8px var(--good); }
+  .lane.mute .dot { background:var(--bad); }
+  .lane .who { font-weight:600; color:var(--c); }
+  .lane .n { margin-left:auto; color:var(--dim); font:500 11px/1 var(--mono); letter-spacing:.06em; }
+  .lane .track { height:7px; background:#241a1b; border-radius:4px; overflow:hidden; }
+  .lane .fill { height:100%; background:var(--c); border-radius:4px; transition:width .25s; }
+  .lane .last { color:var(--dim); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-family:var(--serif); font-style:italic; }
+  .legend { color:var(--dim); font-size:11.5px; line-height:1.5; padding:4px 2px 0; }
+
+  main { flex:1; min-width:0; border:1px solid var(--line); border-radius:12px; background:var(--panel);
+         overflow-y:auto; padding:14px 18px; }
+  .row { display:flex; gap:12px; padding:7px 0; border-bottom:1px solid rgba(58,36,39,.5); align-items:baseline; }
+  .row .t { color:var(--dim); font:11px/1.5 var(--mono); width:66px; flex-shrink:0; }
+  .row .tag { font:600 11px/1.5 -apple-system, system-ui, sans-serif; letter-spacing:.07em; text-transform:uppercase;
+              color:var(--c); width:112px; flex-shrink:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .row .txt { flex:1; font:17px/1.4 var(--serif); word-wrap:break-word; }
+  .row .mark { font:500 11px/1.5 -apple-system, system-ui, sans-serif; letter-spacing:.05em; color:var(--dim);
+               flex-shrink:0; text-align:right; width:172px; white-space:nowrap;
+               overflow:hidden; text-overflow:ellipsis; }
+  .row.drop { opacity:.5; }
+  .row.drop .txt { text-decoration:line-through; text-decoration-color:rgba(208,112,106,.6); }
+  .row.drop .mark { color:var(--bad); }
+  .row.empty .txt { color:var(--dim); font-style:italic; }
+  .row.fresh { animation:in .5s ease-out; }
+  @keyframes in { from { background:rgba(229,121,159,.13) } to { background:transparent } }
+  .gap { color:var(--dim); font:11px/1 var(--mono); letter-spacing:.08em; text-align:center; padding:9px 0 4px; }
+  .none { color:var(--dim); font:italic 17px/1.5 var(--serif); text-align:center; padding:60px 20px; }
+
+  footer { display:flex; gap:10px; align-items:center; flex-wrap:wrap; color:var(--dim); font-size:12px; }
+  button { font:inherit; font-size:12.5px; background:var(--panel2); color:var(--ink); border:1px solid var(--line);
+           border-radius:7px; padding:5px 12px; cursor:pointer; }
+  button:hover { border-color:var(--dim); }
+  button.on { background:var(--ink); color:var(--bg); border-color:var(--ink); }
+  a { color:var(--dim); }
+</style>
+</head>
+<body>
+<div id="aura"></div><div id="frame"><i></i><b></b></div>
+<div class="wrap">
+  <header>
+    <h1>hear<small>every line the mics post to /api/hear</small></h1>
+    <div class="pills" id="pills"></div>
+  </header>
+  <div class="cols">
+    <aside id="lanes"></aside>
+    <main id="feed"><div class="none">waiting for the first line...</div></main>
+  </div>
+  <footer>
+    <button id="b-drop" onclick="toggle('dropped')">dropped lines</button>
+    <button id="b-follow" onclick="toggle('follow')">follow</button>
+    <button onclick="pick=null; rebuild()">all mics</button>
+    <span id="foot"></span>
+    <span style="margin-left:auto"><a href="/">&larr; wrangler</a></span>
+  </footer>
+</div>
+<script>
+const COLORS = ["#e5799f","#7fc7c0","#d9b84a","#c2a8ee","#8fbf6a","#e0925f","#7aa8e0","#cf7f7f"];
+let tape = [], lastId = 0, pick = null, showDropped = true, follow = true;
+let S = { mics:{}, stats:{}, humans:[], speaking:null, echoGuard:true, phase:"", ctxLen:0 };
+
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+const colorOf = mic => COLORS[(Math.max(1, mic) - 1) % COLORS.length];
+const hhmmss = ts => new Date(ts).toTimeString().slice(0, 8);
+function ago(ms) {
+  const s = Math.round(ms / 1000);
+  if (s < 60) return s + "s";
+  if (s < 3600) return Math.floor(s / 60) + "m " + (s % 60) + "s";
+  return Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m";
+}
+
+// ---------- the feed ----------
+function visible(h) { return (showDropped || h.verdict === "kept") && (pick == null || h.mic === pick); }
+function rowHtml(h, prev, fresh) {
+  const parts = [];
+  if (prev && h.ts - prev.ts > 20000) parts.push(`<div class="gap">— ${ago(h.ts - prev.ts)} of silence —</div>`);
+  const cls = "row " + (h.verdict === "kept" ? "" : h.verdict === "empty" ? "empty " : "drop ") + (fresh ? "fresh" : "");
+  const mark = h.verdict === "kept" ? "&rarr; context"
+    : h.verdict === "empty" ? "empty, ignored"
+    : "echo guard" + (h.speaking ? " &middot; " + esc(h.speaking) : "");
+  parts.push(`<div class="${cls}" style="--c:${colorOf(h.mic)}" title="hear #${h.id}">
+    <span class="t">${hhmmss(h.ts)}</span>
+    <span class="tag">mic ${h.mic}${h.name ? " &middot; " + esc(h.name) : ""}</span>
+    <span class="txt">${h.text ? esc(h.text) : "(no text)"}</span>
+    <span class="mark">${mark}</span></div>`);
+  return parts.join("");
+}
+function rebuild() {
+  const feed = document.getElementById("feed");
+  const list = tape.filter(visible);
+  if (!list.length) {
+    feed.innerHTML = `<div class="none">${tape.length ? "nothing matches this filter." : "no line has arrived yet. start the transcriber in MICS, then talk."}</div>`;
+  } else {
+    feed.innerHTML = list.map((h, i) => rowHtml(h, list[i - 1], false)).join("");
+    if (follow) feed.scrollTop = feed.scrollHeight;
+  }
+  render();
+}
+// tape already holds `fresh`; `prev` is the last visible line from before them
+function appendNew(fresh, prev) {
+  const feed = document.getElementById("feed");
+  const shown = fresh.filter(visible);
+  if (!shown.length) return;
+  if (feed.querySelector(".none")) return rebuild();
+  const atEnd = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 90;
+  for (const h of shown) { feed.insertAdjacentHTML("beforeend", rowHtml(h, prev, true)); prev = h; }
+  while (feed.children.length > 700) feed.removeChild(feed.firstChild);
+  if (follow || atEnd) feed.scrollTop = feed.scrollHeight;
+}
+
+// ---------- lanes and status ----------
+function laneCount() {
+  const fromMics = (S.mics && S.mics.running) ? (S.mics.channels || (S.mics.levels || []).length) : 0;
+  const fromTape = tape.reduce((m, h) => Math.max(m, h.mic), 0);
+  const fromRoster = (S.humans || []).reduce((m, h) => Math.max(m, +h.mic || 0), 0);
+  return Math.max(fromMics, fromTape, fromRoster, 1);
+}
+function micFresh() { return S.mics && S.mics.running && (Date.now() - (S.mics.ts || 0) < 4000); }
+function render() {
+  const on = micFresh();
+  const st = S.stats || {};
+  document.getElementById("pills").innerHTML = [
+    on ? `<span class="pill live">transcriber live &middot; <b>${esc(S.mics.device || "?")}</b> &middot; ${S.mics.channels || "?"} ch</span>`
+       : (S.mics && S.mics.running ? `<span class="pill warn">transcriber starting...</span>`
+                                   : `<span class="pill off">transcriber not running</span>`),
+    S.mics && S.mics.err ? `<span class="pill off">${esc(S.mics.err)}</span>` : "",
+    `<span class="pill">heard <b>${st.total || 0}</b> &middot; kept <b>${st.kept || 0}</b> &middot; dropped <b>${(st["ai-speaking"] || 0) + (st.empty || 0)}</b></span>`,
+    S.speaking ? `<span class="pill warn"><b>${esc(S.speaking.player)}</b> is speaking &middot; mics muted</span>`
+               : (S.echoGuard ? "" : `<span class="pill warn">echo guard off</span>`),
+    `<span class="pill">${esc(S.phase || "")}</span>`,
+  ].join("");
+
+  const n = laneCount();
+  document.getElementById("lanes").innerHTML = Array.from({ length: n }, (_, i) => {
+    const mic = i + 1;
+    const h = (S.humans || []).find(x => x.mic == mic);
+    const level = on ? (S.mics.levels[i] || 0) : 0;
+    const spoke = on ? S.mics.speech_ago[i] : null;
+    const lines = tape.filter(x => x.mic === mic);
+    const kept = lines.filter(x => x.verdict === "kept").length;
+    const last = lines.filter(x => x.text).slice(-1)[0];
+    const cls = ["lane", !on ? "mute" : (spoke != null && spoke < 3 ? "hot" : ""),
+                 pick === mic ? "sel" : "", pick != null && pick !== mic ? "dim" : ""].join(" ");
+    return `<div class="${cls}" style="--c:${colorOf(mic)}" onclick="pick=${pick === mic ? "null" : mic}; rebuild()">
+      <div class="top"><span class="dot"></span>
+        <span class="who">mic ${mic}${h && h.name ? " &middot; " + esc(h.name) : ""}</span>
+        <span class="n">${kept}/${lines.length}</span></div>
+      <div class="track"><div class="fill" style="width:${Math.min(100, Math.round(Math.sqrt(level) * 250))}%"></div></div>
+      <div class="last">${last ? esc(last.text).slice(0, 120) : (h && h.name ? "nothing heard yet" : "unassigned mic")}</div>
+    </div>`;
+  }).join("") + `<div class="legend">Each lane counts <b>kept/heard</b> lines.
+    Kept lines go into the game context as <i>name: text</i>. Dropped lines never reach the AI players.
+    Names come from the mic roster in SETUP.</div>`;
+
+  document.getElementById("b-drop").className = showDropped ? "on" : "";
+  document.getElementById("b-follow").className = follow ? "on" : "";
+  const last = tape[tape.length - 1];
+  document.getElementById("foot").innerHTML = `${tape.length} line${tape.length === 1 ? "" : "s"} on the tape`
+    + (last ? ` &middot; last ${ago(Date.now() - last.ts)} ago` : "")
+    + ` &middot; context holds ${S.ctxLen} entries`;
+}
+function toggle(what) {
+  if (what === "dropped") showDropped = !showDropped;
+  if (what === "follow") follow = !follow;
+  rebuild();
+}
+
+// ---------- polling ----------
+async function poll() {
+  try {
+    const r = await fetch("/api/hears?since=" + lastId, { cache: "no-store" }).then(x => x.json());
+    Object.assign(S, { mics: r.mics || {}, stats: r.stats || {}, humans: r.humans || [],
+      speaking: r.speaking, echoGuard: r.echoGuard, phase: r.phase, ctxLen: r.ctxLen });
+    if (r.lastId < lastId) { tape = []; lastId = 0; rebuild(); return; } // server restarted: tape is gone
+    const fresh = r.hears || [];
+    if (fresh.length) {
+      lastId = fresh[fresh.length - 1].id;
+      const prev = tape.filter(visible).slice(-1)[0];
+      tape = tape.concat(fresh).slice(-600);
+      appendNew(fresh, prev);
+    }
+    render();
+  } catch (e) {}
+}
+rebuild();
+poll();
+setInterval(poll, 700);
+</script>
+</body>
+</html>
