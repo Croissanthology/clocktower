@@ -879,7 +879,7 @@ function fixNames(text) {
     if (b.town) ctxAppend({ kind: 'town', text: b.town });
     if (b.note) ctxAppend({ kind: 'note', text: b.note });
     for (const g of Array.isArray(b.game) ? b.game : []) {
-      ctxAppend({ kind: 'phase', text: g });
+      ctxAppend({ kind: 'phase', text: `MARGOT: ${g}` });
       if (/\b(executed|died|dies|is dead|killed)\b/i.test(g))
         for (const p of state.players) if (!p.dead && new RegExp(`\\b${p.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(g)) { p.dead = true; p.ghostVote = true; p.action = null; }
     }
