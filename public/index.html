@@ -520,6 +520,7 @@ function renderMics(){
       ${S.mics && S.mics.running
         ? `<button onclick="api('/api/mic/stop',{}).then(()=>renderMics())">stop</button>`
         : `<button class="on" onclick="api('/api/mic/start',{device:ui.micDevice,channels:ui.micChannels}).then(()=>renderMics())">start</button>`}
+      <button onclick="window.open('/hear','_blank')" title="live view of every line the mics post">hear monitor</button>
     </div>
     ${starting?`<div style="color:var(--dim);margin-bottom:10px">starting — whisper warming up...</div>`:""}
     ${S.mics && S.mics.err?`<div class="err" style="margin-bottom:10px">${esc(S.mics.err)}</div>`:""}

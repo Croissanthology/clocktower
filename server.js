@@ -389,6 +389,21 @@ let speakEndedAt = 0; // echo guard tail: room reverb + chunk boundary after an 
 let mics = { running: false, device: '', channels: 0, levels: [], speech_ago: [], ts: 0, err: '' };
 let inputsCache = { ts: 0, list: [] };
 
+// --- the hear tape: every line the transcriber posts, kept in memory for the /hear monitor ---
+// (kept off state.json on purpose — it is a debug view of the mics, not part of the game)
+const HEARS_MAX = 600;
+let hears = [];
+let hearSeq = 0;
+let hearStats = { total: 0, kept: 0, 'ai-speaking': 0, empty: 0 };
+function recordHear(mic, text, verdict) {
+  const h = state.humans.find(x => x.mic == mic);
+  hears.push({ id: ++hearSeq, ts: Date.now(), mic, name: (h && h.name) || '', text, verdict,
+    speaking: state.speaking ? state.speaking.player : '' });
+  if (hears.length > HEARS_MAX) hears.splice(0, hears.length - HEARS_MAX);
+  hearStats.total++;
+  hearStats[verdict] = (hearStats[verdict] || 0) + 1;
+}
+
 function micVocab() {
   const names = new Set(['Margot', 'Adam', 'Storyteller']);
   for (const p of state.players) names.add(p.name);
@@ -602,6 +617,10 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/state') {
     return send(200, { ...state, phaseLabel: phaseLabel(), rulesLoaded: fs.existsSync(RULES_FILE), model: MODEL, mics, lanUrl: `http://${lanIp()}:${PORT}/whisper`, wranglerUrl: wranglerUrl() });
   }
+  if (req.method === 'GET' && (url.pathname === '/hear' || url.pathname === '/hear.html')) {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    return res.end(fs.readFileSync(path.join(ROOT, 'public', 'hear.html')));
+  }
   // --- the whisper channel, served to side laptops on the LAN ---
   if (req.method === 'GET' && (url.pathname === '/whisper' || url.pathname === '/whisper.html')) {
     res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -660,15 +679,27 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/hear') {
     const b = await body(req);
     const t = String(b.text || '').trim();
+    const mic = +b.mic || 0;
     // echo guard: while an AI is speaking, table mics mostly pick up the AI's own speaker —
     // that text is already in context via delivery, so drop it instead of double-hearing it
-    if ((state.speaking || Date.now() - speakEndedAt < 2000) && process.env.CT_ECHO_GUARD !== '0') return send(200, { ok: true, dropped: 'ai-speaking' });
+    const guarded = (state.speaking || Date.now() - speakEndedAt < 2000) && process.env.CT_ECHO_GUARD !== '0';
+    if (guarded) { recordHear(mic, t, 'ai-speaking'); return send(200, { ok: true, dropped: 'ai-speaking' }); }
     if (t) {
-      const h = state.humans.find(x => x.mic == b.mic);
-      ctxAppend({ kind: 'town', text: `${h && h.name ? h.name : 'mic ' + b.mic}: ${t}` });
+      const h = state.humans.find(x => x.mic == mic);
+      ctxAppend({ kind: 'town', text: `${h && h.name ? h.name : 'mic ' + mic}: ${t}` });
+      recordHear(mic, t, 'kept');
       save();
-    }
+    } else recordHear(mic, t, 'empty');
     return send(200, { ok: true });
+  }
+  // the hear monitor: incremental tape + live mic levels in one poll
+  if (req.method === 'GET' && url.pathname === '/api/hears') {
+    const since = +url.searchParams.get('since') || 0;
+    return send(200, {
+      hears: hears.filter(h => h.id > since), lastId: hearSeq, stats: hearStats,
+      mics, humans: state.humans, speaking: state.speaking,
+      echoGuard: process.env.CT_ECHO_GUARD !== '0', phase: phaseLabel(), ctxLen: state.ctx.length,
+    });
   }
   if (req.method === 'GET' && url.pathname === '/api/models') {
     if (Date.now() - modelsCache.ts < 3600e3 && modelsCache.list.length) return send(200, { models: modelsCache.list });
