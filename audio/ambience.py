@@ -17,7 +17,7 @@ from scipy.io import wavfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 SFX = os.path.join(HERE, "sfx")
 KINDS = {"quill": 5, "creak": 4, "chant": 2, "thunder": 2}   # relative frequency
-GAIN  = {"quill": 0.5, "creak": 0.6, "chant": 0.8, "thunder": 0.9}
+GAIN  = {"quill": 0.5, "creak": 0.6, "chant": 1.0, "thunder": 0.9}
 SR = 44100
 
 ap = argparse.ArgumentParser()
