@@ -51,6 +51,7 @@ try {
   if (!state.whispers) state.whispers = [];
   if (!state.auto) state.auto = { tick: 'off', secs: 45, speak: false };
   for (const p of state.players) {
+    if (p.status === 'thinking') p.status = 'idle'; // a call in flight when the server died is gone; don't freeze the player out
     if (p.ctxCursor === undefined) p.ctxCursor = state.ctx.length;
     if (!p.history) p.history = [];
   }
@@ -700,6 +701,33 @@ const server = http.createServer(async (req, res) => {
     if (b.stop) { if (speakChild) try { speakChild.kill('SIGKILL'); } catch (e) {} state.speaking = null; save(); return send(200, { ok: true }); }
     const r = speakQueued(b.id);
     return send(r.code, r.body);
+  }
+  // one-tap game events from the storyteller's table: GAME line for everyone, deaths applied, votes requested
+  if (req.method === 'POST' && url.pathname === '/api/event') {
+    const b = await body(req);
+    const who = String(b.who || '').trim(), by = String(b.by || '').trim();
+    const ai = player(who);
+    let text = '', vote = false;
+    if (b.type === 'nominated') { text = `${by || 'someone'} nominates ${who}. VOTE NOW.`; vote = true; }
+    else if (b.type === 'executed') { text = `${who} is executed and dies.`; }
+    else if (b.type === 'died') { text = `${who} died in the night.`; }
+    else if (b.type === 'noexec') { text = `nominations are closed — no execution today.`; }
+    else if (b.type === 'open') { text = `the storyteller opens nominations.`; }
+    else if (b.type === 'custom' && b.text) { text = String(b.text).trim(); }
+    else return send(400, { err: 'unknown event' });
+    ctxAppend({ kind: 'phase', text });
+    if ((b.type === 'executed' || b.type === 'died') && ai && !ai.dead) { ai.dead = true; ai.ghostVote = true; ai.action = null; }
+    save();
+    let pushed = [];
+    if (vote) {
+      const targets = state.players.filter(p => p.status !== 'thinking' && p.name !== who);
+      const priv = {};
+      for (const p of targets) priv[p.name] = p.dead
+        ? (p.ghostVote === false ? `${who} is on the block. you have no votes left — action stays null.` : `${who} is on the block. this would spend your ONLY ghost vote: return action {"type":"vote","target":"${who}"} to vote for execution, or null to keep it.`)
+        : `${who} is on the block. return action {"type":"vote","target":"${who}"} to vote for execution, or action null to abstain. decide now; keep say empty unless you must speak before the hands go up.`;
+      pushed = doPushTargets(targets, priv, true);
+    }
+    return send(200, { ok: true, text, pushed });
   }
   if (req.method === 'POST' && url.pathname === '/api/auto') {
     const b = await body(req);

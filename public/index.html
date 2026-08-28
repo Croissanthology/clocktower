@@ -151,6 +151,12 @@
   .pingbar .lbl { font:600 15px var(--serif); letter-spacing:.14em; color:var(--dim); text-transform:uppercase;
                   cursor:pointer; padding:12px 4px; }
   .pingbar .lbl:hover { color:var(--ink); }
+  .events { display:flex; gap:6px; flex-shrink:0; align-items:center; position:relative; }
+  .events button { font-size:12px; padding:5px 9px; color:var(--dim); }
+  .events button:hover { color:var(--ink); }
+  .events .pick { position:absolute; bottom:44px; left:0; display:flex; flex-wrap:wrap; gap:5px; background:var(--panel);
+    border:1px solid var(--line); border-radius:12px; padding:9px; z-index:6; width:420px; box-shadow:0 6px 30px rgba(0,0,0,.35); }
+  .events .pick .ttl { width:100%; color:var(--dim); font-size:11px; letter-spacing:.1em; text-transform:uppercase; margin-bottom:2px; }
   #ping { height:46px; font-size:15px; }
 
   /* fullscreen views */
@@ -248,9 +254,11 @@ function nav(name, ai){
   if (name==="home") {
     v.innerHTML = `<div class="home"><div class="boxes" id="boxes"></div>
       <div class="pingbar"><span class="lbl" onclick="nav('ctx')">CONTEXT</span>
+        <div class="events" id="events"></div>
         <textarea id="ping" oninput="ui.buffer=this.value"
           onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();doPush()}"></textarea></div></div>`;
     const p=document.getElementById("ping"); p.value=ui.buffer; p.focus();
+    renderEvents();
   }
   if (name==="ai") {
     const p = S.players.find(x=>x.name===view.ai); if(!p) return nav("home");
@@ -746,6 +754,27 @@ async function dequeue(id,remove){
 }
 async function togglePause(){ const r=await api("/api/pause",{}); S.paused=r.paused; update(); }
 let autoTimer=null;
+// --- one-tap game events (storyteller's table) ---
+let evPick = null; // {type, step:'who'|'by', who}
+function seatNames(){ const s=(S.seats||[]).filter(Boolean); return s.length?s:S.players.map(p=>p.name).concat(S.humans.map(h=>h.name)); }
+function renderEvents(){
+  const el=document.getElementById("events"); if(!el) return;
+  let menu="";
+  if (evPick) {
+    const ttl = evPick.step==="by" ? `who nominates ${esc(evPick.who)}?` : ({nominated:"who is nominated?",executed:"who was executed?",died:"who died in the night?"})[evPick.type];
+    menu = `<div class="pick"><span class="ttl">${ttl}</span>${seatNames().map(n=>`<span class="chip-p" style="--c:${S.players.some(p=>p.name===n)?colorOf(n):"var(--ink)"}" onclick="evChoose('${esc(n)}')">${esc(n)}</span>`).join("")}
+      <span class="chip-p unseat" onclick="evPick=null;renderEvents()">cancel</span></div>`;
+  }
+  el.innerHTML = menu + ["nominated","executed","died"].map(t=>`<button class="ghost" onclick="evStart('${t}')">${t}</button>`).join("")
+    + `<button class="ghost" onclick="evSend({type:'noexec'})">no execution</button><button class="ghost" onclick="evSend({type:'open'})">noms open</button>`;
+}
+function evStart(type){ evPick={type, step:"who"}; renderEvents(); }
+function evChoose(n){
+  if (evPick.step==="who" && evPick.type==="nominated") { evPick.who=n; evPick.step="by"; renderEvents(); return; }
+  if (evPick.step==="by") { evSend({type:"nominated", who:evPick.who, by:n}); return; }
+  evSend({type:evPick.type, who:n});
+}
+async function evSend(ev){ evPick=null; renderEvents(); await api("/api/event", ev); poll0(); }
 async function cycleAuto(){
   const cur=(S.auto||{}).tick||"off"; const next={off:"timer",timer:"lull",lull:"off"}[cur];
   await api("/api/auto",{tick:next}); poll0();
