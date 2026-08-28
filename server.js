@@ -208,11 +208,19 @@ function buildUserMessage(p, push) {
   const last = p.history[p.history.length - 1];
   if (last && ((last.say || []).length || last.action || last.ask)) {
     const bits = [];
-    for (const s of last.say || []) bits.push(`you said${s.to && s.to !== 'town' ? ' to ' + s.to : ''}: "${s.text}"${last.sayHeld ? ' (held — night, not spoken)' : ' (plays through your speaker when margot triggers it)'}`);
+    for (const s of last.say || []) bits.push(`you queued${s.to && s.to !== 'town' ? ' for ' + s.to : ''}: "${s.text}"${last.sayHeld ? ' (held — night, not spoken)' : ''}`);
     if (last.action) bits.push(`your action: ${last.action.type} → ${last.action.target || '—'}`);
     if (last.ask) bits.push(`you asked margot: ${last.ask}`);
     parts.push(`=== your previous tick (tick ${last.turn}) — what you did ===\n${bits.join('\n')}`);
   }
+  const fates = (p.sayLog || []).filter(f => !f.reported);
+  if (fates.length) {
+    const word = { spoken: 'SPOKEN ALOUD — the table heard it', skipped: 'SKIPPED by margot — not spoken (pace, redundancy, or the moment had passed; nothing personal)', stale: 'DROPPED — sat unspoken too long, the conversation moved on' };
+    parts.push(`=== what became of your lines (only what you were told here reached the table) ===\n${fates.map(f => `"${f.text.slice(0, 120)}" → ${word[f.outcome] || f.outcome}`).join('\n')}\nMargot skips lines that are late, repetitive, or say nothing new — shorter, sharper, better-timed lines get through.`);
+    for (const f of fates) f.reported = true;
+  }
+  const waiting = state.queue.filter(q => q.player === p.name).length;
+  if (waiting) parts.push(`(${waiting} of your line(s) still waiting in the queue, unspoken — don't repeat them.)`);
   if (p.feedback) parts.push(`=== correction from last tick ===\n${p.feedback}`);
   const glog = gameLog();
   if (glog) parts.push(`=== the game so far — every official event, oldest first (authoritative; if your sheet disagrees, your sheet is wrong) ===\n${glog}`);
@@ -451,10 +459,17 @@ function doPushTargets(targets, priv, force) {
   return targets.map(p => p.name);
 }
 
+// every line an AI queues gets a fate it is told about next tick: spoken / skipped (margot's ×) / stale (auto-dropped)
+function sayFate(q, outcome) {
+  const p = player(q.player); if (!p) return;
+  p.sayLog = (p.sayLog || []).slice(-15);
+  p.sayLog.push({ id: q.id, text: q.text, outcome, ts: Date.now(), reported: false });
+}
 function deliverQueued(id) {
   const i = state.queue.findIndex(q => q.id === id);
   if (i < 0) return;
   const q = state.queue[i];
+  sayFate(q, 'spoken');
   ctxAppend({ kind: 'say', player: q.player, to: q.to, text: q.text });
   state.queue.splice(i, 1);
   save();
@@ -671,7 +686,7 @@ setInterval(() => {
   // auto-speak: one line at a time, a breath between lines; CT_SPEAK_POLITE=1 additionally waits for the room to be quiet
   if (a.speak && !state.speaking && state.queue.length && now - speakEndedAt > 1500 && (process.env.CT_SPEAK_POLITE !== '1' || roomQuiet(1.5))) {
     const stale = state.queue.filter(q => (q.to === 'town' || !q.to) && now - q.ts > STALE_LINE * 1000);
-    for (const q of stale) { state.queue.splice(state.queue.indexOf(q), 1); log(q.player, { dropped: 'stale', text: q.text }); }
+    for (const q of stale) { sayFate(q, 'stale'); state.queue.splice(state.queue.indexOf(q), 1); log(q.player, { dropped: 'stale', text: q.text }); }
     if (stale.length) save();
     const q = state.queue.find(x => x.file && fs.existsSync(x.file)) || state.queue[0];
     if (q) speakQueued(q.id);
@@ -1035,7 +1050,7 @@ function fixNames(text) {
   if (req.method === 'POST' && url.pathname === '/api/queue') {
     const b = await body(req);
     const i = state.queue.findIndex(q => q.id === b.id);
-    if (i >= 0) { if (b.remove) state.queue.splice(i, 1); else deliverQueued(b.id); }
+    if (i >= 0) { if (b.remove) { sayFate(state.queue[i], 'skipped'); state.queue.splice(i, 1); } else deliverQueued(b.id); }
     save(); return send(200, { ok: true });
   }
   if (req.method === 'POST' && url.pathname === '/api/edit') {
