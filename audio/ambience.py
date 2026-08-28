@@ -88,22 +88,35 @@ def play(x, label):
 
 def to_minute(): return 60 - (time.time() % 60)
 
+stream = None; opened = 0
+def reopen():
+    """(re)open the output stream on the current default device — a stream that outlived a bluetooth flap plays into nothing"""
+    global stream, opened
+    try:
+        if stream is not None: stream.stop(); stream.close()
+    except Exception: pass
+    stream = sd.OutputStream(samplerate=SR, channels=1, device=dev, callback=callback, blocksize=2048)
+    stream.start(); opened = time.time()
+REOPEN_EVERY = 60
 def idle(secs):
-    """wait, but strike the clock on any minute boundary that falls inside the wait"""
+    """wait, but strike the clock on any minute boundary that falls inside the wait; reopen the stream once a minute"""
     end = time.time() + secs
     while True:
         rem = end - time.time()
         if rem <= 0: return
         if clock is not None and to_minute() < min(rem, 1.0):
             time.sleep(max(0, to_minute())); play(clock, "clock"); continue
+        if time.time() - opened > REOPEN_EVERY and not busy() and to_minute() > 3:
+            reopen(); print(time.strftime("%H:%M:%S"), "stream reopened", flush=True)
         time.sleep(min(rem, 0.25))
 
 name = sd.query_devices(dev)["name"] if dev is not None else "default output"
 print(f"ambience on {name} — rain {a.rain if rain is not None else 'off'}, clock {'on' if clock is not None else 'off'}, "
       + ", ".join(f"{k} x{len(clips[k])}" for k in kinds), flush=True)
 last = None
-with sd.OutputStream(samplerate=SR, channels=1, device=dev, callback=callback, blocksize=2048):
-    idle(random.uniform(2, 6))
+reopen()
+idle(random.uniform(2, 6))
+if True:
     while True:
         k = random.choices(kinds, weights)[0]
         if k == last and len(kinds) > 1: k = random.choices(kinds, weights)[0]
