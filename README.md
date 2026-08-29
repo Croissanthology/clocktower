@@ -6,11 +6,25 @@ subscription** (headless `claude -p`, no API tokens). One screen to wrangle from
 ## run
 
 ```
+npm install     # once — pulls @earendil-works/pi-agent-core + pi-ai
 node server.js
 # → http://localhost:4141
 ```
 
 env knobs: `CT_MODEL` (default `sonnet`), `CT_EFFORT` (default `low`), `PORT` (default 4141).
+
+## the agent core (pi-core.mjs)
+
+Each AI turn runs through a [`@earendil-works/pi-agent-core`](https://github.com/earendil-works/pi/tree/main/packages/agent)
+`Agent`, in `pi-core.mjs`. The subscription model is unchanged: instead of a network
+provider, a custom **`StreamFn`** wraps the two backends the harness already uses —
+headless `claude -p` (rides the Claude subscription, no API tokens) and OpenRouter over
+HTTPS. Pi's StreamFn contract is *never throw; encode every failure as an error event* —
+so a CLI crash, a timeout, a malformed body, or an abort all arrive as one clean typed
+result on a single code path (surfaced via the Agent's `errorMessage`) instead of leaking
+as an unhandled rejection or a half-fired callback. `server.js` stays CommonJS and loads
+the ESM core once via a cached dynamic `import()`; `callModel(p, msg, cb, …)` keeps its
+exact old callback signature, so the rest of the server is untouched.
 
 ## the model
 
@@ -54,7 +68,8 @@ speech automatically joins every other AI's next transcript. browser TTS is the 
 
 ## files
 
-- `server.js` — zero-dependency node server + claude spawner (auto-retries silent failures)
+- `server.js` — node http server + scheduler + audio/mic wiring (auto-retries silent failures)
+- `pi-core.mjs` — the agent core on `@earendil-works/pi-agent-core`: one Pi `Agent` per turn, custom StreamFn over the claude CLI / openrouter backends
 - `public/index.html` — the UI
 - `prompts/system-template.md` — the model-facing briefing/contract (picked up on next push)
 - `rules/trouble-brewing.md` — wiki-verified ruleset; each AI's card opens with its role's rules

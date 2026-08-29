@@ -238,49 +238,14 @@ function openrouterKey() {
   if (process.env.OPENROUTER_API_KEY) return process.env.OPENROUTER_API_KEY;
   try { return fs.readFileSync(path.join(ROOT, 'openrouter.key'), 'utf8').trim(); } catch (e) { return ''; }
 }
-function callOpenrouter(model, sysText, userMsg, cb, effort = EFFORT, maxTokens = 8000) {
-  const key = openrouterKey();
-  if (!key) return cb(new Error('no openrouter key — paste it into clocktower/openrouter.key (one line) or set OPENROUTER_API_KEY'), '');
-  const bodyStr = JSON.stringify({ model, max_tokens: maxTokens, reasoning: { effort },
-    messages: [{ role: 'system', content: sysText }, { role: 'user', content: userMsg }] });
-  const req = https.request({ hostname: 'openrouter.ai', path: '/api/v1/chat/completions', method: 'POST',
-    headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyStr) },
-    timeout: TIMEOUT_MS }, res => {
-    let d = ''; res.on('data', c => d += c); res.on('end', () => {
-      try {
-        const j = JSON.parse(d);
-        if (j.error) return cb(new Error('openrouter: ' + String(j.error.message || JSON.stringify(j.error)).slice(0, 200)), '');
-        const m = (j.choices || [])[0]?.message || {};
-        cb(null, (m.content || '').trim(), '', (m.reasoning || m.reasoning_content || '').trim());
-      } catch (e) { cb(new Error('openrouter bad response: ' + d.slice(0, 200)), ''); }
-    });
-  });
-  req.on('timeout', () => req.destroy(new Error('openrouter timeout')));
-  req.on('error', e => cb(e, ''));
-  req.write(bodyStr); req.end();
-}
 
-// claude CLI stream-json → {text, thinking}. falls back to treating the blob as plain text.
-function parseStreamJson(stdout) {
-  let text = '', thinking = '', parsedAny = false;
-  for (const line of stdout.split('\n')) {
-    const l = line.trim();
-    if (!l.startsWith('{')) continue;
-    try {
-      const j = JSON.parse(l);
-      parsedAny = true;
-      if (j.type === 'assistant' && j.message && Array.isArray(j.message.content)) {
-        for (const b of j.message.content) {
-          if (b.type === 'thinking' && b.thinking) thinking += b.thinking + '\n';
-          if (b.type === 'text' && b.text) text += b.text;
-        }
-      }
-      if (j.type === 'result' && typeof j.result === 'string') text = j.result;
-    } catch (e) {}
-  }
-  if (!parsedAny) return { text: stdout, thinking: '' };
-  return { text: text.trim(), thinking: thinking.trim() };
-}
+// --- the agent core lives in pi-core.mjs, on @earendil-works/pi-agent-core ---
+// server.js is CommonJS and pi-core is ESM, so it is loaded once via dynamic
+// import() and the promise is cached. The Pi Agent runs each player turn and its
+// StreamFn (wrapping the claude CLI / openrouter backends) is contracted never to
+// throw — every failure, timeout, or abort comes back as a clean result object.
+let piCorePromise = null;
+function piCore() { return piCorePromise || (piCorePromise = import('./pi-core.mjs')); }
 
 function callModel(p, msg, cb, effort = EFFORT, maxTokens = 8000) { // cb(err, raw, stderr, thinking)
   let model = p.model || MODEL;
@@ -290,21 +255,18 @@ function callModel(p, msg, cb, effort = EFFORT, maxTokens = 8000) { // cb(err, r
   if (forceOR) model = model.slice(3);
   else if (model.startsWith('anthropic/')) model = model.split('/')[1].replace(/:.*$/, '');
   const sysFile = sysPromptPath(p);
-  if (model.includes('/')) {
-    callOpenrouter(model, fs.readFileSync(sysFile, 'utf8'), msg, cb, effort, maxTokens);
-    return null;
-  }
-  const args = ['-p', '--model', model, '--effort', effort,
-    '--system-prompt-file', sysFile, '--no-session-persistence', '--disallowedTools', '*',
-    '--output-format', 'stream-json', '--verbose'];
-  const child = execFile('claude', args, { cwd: GAME, timeout: TIMEOUT_MS, maxBuffer: 50 * 1024 * 1024 },
-    (err, stdout, stderr) => {
-      const { text, thinking } = parseStreamJson((stdout || '').trim());
-      cb(err, text, stderr || '', thinking);
-    });
-  child.stdin.write(msg);
-  child.stdin.end();
-  return child;
+  const backend = model.includes('/') ? 'openrouter' : 'claude-cli';
+  let done = false;
+  const once = (err, text, stderr, thinking) => { if (done) return; done = true; cb(err, text, stderr, thinking); };
+  piCore()
+    .then(({ runPlayerTurn }) => runPlayerTurn({
+      name: p.name, backend, model, sysFile, userMsg: msg,
+      effort, maxTokens, cwd: GAME, timeoutMs: TIMEOUT_MS,
+      openrouterKey: backend === 'openrouter' ? openrouterKey() : '',
+    }))
+    .then(r => once(r.error ? new Error(r.error) : null, r.text || '', r.stderr || '', r.thinking || ''))
+    .catch(e => once(e, '', '', ''));
+  return null;
 }
 
 function pushToPlayer(p, push, attempt = 1) {

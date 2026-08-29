@@ -1,6 +1,10 @@
 openrouter.key
 *.key
+node_modules/
 game/
+# scratch test artifacts (safe to delete)
+.fakebin/
+ct-*.mjs
 audio/venv/
 voices/venv/
 voices/models/

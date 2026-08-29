@@ -1,0 +1,18 @@
+{
+  "name": "clocktower",
+  "version": "1.0.0",
+  "description": "LLM player harness for Blood on the Clocktower — AI agent core on @earendil-works/pi-agent-core",
+  "private": true,
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "^0.84.4",
+    "@earendil-works/pi-ai": "^0.84.4"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}
