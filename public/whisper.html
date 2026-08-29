@@ -111,18 +111,18 @@ function render(){
         :`<div class="empty">Nobody else will hear this. ${esc(ai)} answers in writing, only here — and may lie, as anyone might.</div>`}
       ${thinking?`<div class="wait">${esc(ai)} is thinking</div>`:""}
     </div>
-    <div class="in"><textarea id="ta" placeholder="whisper…" ${thinking?"disabled":""}
+    <div class="in"><textarea id="ta" placeholder="whisper…"
         oninput="draft=this.value" onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
-      <button class="send" onclick="send()" ${thinking?"disabled":""}>whisper</button></div>
+      <button class="send" onclick="send()">whisper</button></div>
     <div class="hint">enter to send · leave when you walk away so the next person starts fresh</div>`;
-  const ta = document.getElementById("ta"); ta.value = draft; if (!thinking) ta.focus();
+  const ta = document.getElementById("ta"); ta.value = draft; ta.focus();
   const th = document.getElementById("thread"); th.scrollTop = th.scrollHeight;
 }
 function pick(k, v, idx){ if (k==="me") me=v; else { ai=v; aiIdx=idx; } try{ sessionStorage.setItem("me",me||""); sessionStorage.setItem("ai",ai||""); }catch(e){} thread=[]; sig=""; render(); poll(true); }
 function reset(){ me=null; ai=null; try{ sessionStorage.clear(); }catch(e){} render(); }
 function leave(){ ai=null; me=null; draft=""; try{ sessionStorage.clear(); }catch(e){} render(); }
 async function send(){
-  const text = draft.trim(); if (!text || thinking) return;
+  const text = draft.trim(); if (!text) return;
   draft = ""; thinking = true; sig = "";
   thread.push({ id:"tmp"+Date.now(), from:"human", text });
   render();
