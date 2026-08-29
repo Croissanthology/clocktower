@@ -644,10 +644,15 @@ function speakQueued(id) {
   const startPlayback = (file) => playWithBell(file, ch, onDone);
   if (q.file && fs.existsSync(q.file)) startPlayback(q.file);
   else {
-    // not synthesized yet: synthesize it NOW with the character's own voice and wait — no fallback voices, ever
-    synthToFile(voiceFor(idx, pl), q.text, path.join(GAME, `speech-${q.id}.wav`), (err, file) => {
+    // not synthesized yet: don't make the table wait 15 s for kokoro — the mac's own voice, now
+    const macVoices = ['Daniel', 'Samantha', 'Fred', 'Moira', 'Rishi', 'Karen'];
+    const own = voiceFor(idx, pl);
+    const fb = MAC_VOICES.has(own) ? own : macVoices[idx % macVoices.length];   // never change a character's voice mid-game
+    const aiff = path.join(GAME, `speech-${q.id}-say.aiff`);
+    execFile('say', ['-v', fb, '-o', aiff, q.text], { timeout: 20000 }, (err) => {
       if (err) { state.speaking = null; save(); return; }
-      q.file = file; startPlayback(file);
+      log(q.player, { fallbackVoice: 'say', id: q.id });
+      startPlayback(aiff);
     });
   }
   return { code: 200, body: { ok: true } };
