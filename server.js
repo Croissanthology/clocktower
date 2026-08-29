@@ -131,7 +131,11 @@ function extractJson(text) {
     if (inStr) { if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
     if (c === '"') inStr = true;
     else if (c === '{') depth++;
-    else if (c === '}') { depth--; if (depth === 0) return JSON.parse(text.slice(start, i + 1)); }
+    else if (c === '}') { depth--; if (depth === 0) {
+      const blob = text.slice(start, i + 1);
+      try { return JSON.parse(blob); }
+      catch (e) { return JSON.parse(blob.replace(/\\(?!["\\/bfnrtu])/g, '\\\\')); } // models sometimes write \' or \  — escape the stray backslash instead of losing the tick
+    } }
   }
   throw new Error('unbalanced JSON in output');
 }
