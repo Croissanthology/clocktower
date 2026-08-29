@@ -1,12 +1,18 @@
 #!/usr/bin/env node
-// clocktower model wrangler — zero-dependency node server.
-// spawns headless `claude -p` (your subscription) for up to 4 AI players.
-const http = require('http');
-const https = require('https');
-const fs = require('fs');
-const path = require('path');
-const { execFile } = require('child_process');
+// clocktower model wrangler — node server for up to 4 AI players.
+// AI turns run on your claude subscription (headless `claude -p`) via the Pi
+// agent core in pi-core.js — no API tokens.
+import http from 'node:http';
+import https from 'node:https';
+import fs from 'node:fs';
+import path from 'node:path';
+import os from 'node:os';
+import crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { runPlayerTurn } from './pi-core.js';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
 const GAME = path.join(ROOT, 'game');
 const STATE_FILE = path.join(GAME, 'state.json');
@@ -68,7 +74,6 @@ try {
   }
 } catch (e) {}
 
-const os = require('os');
 function lanIp() {
   for (const [name, addrs] of Object.entries(os.networkInterfaces()))
     for (const a of addrs || []) if (a.family === 'IPv4' && !a.internal && !name.startsWith('utun') && !name.startsWith('bridge')) return a.address;
@@ -239,14 +244,10 @@ function openrouterKey() {
   try { return fs.readFileSync(path.join(ROOT, 'openrouter.key'), 'utf8').trim(); } catch (e) { return ''; }
 }
 
-// --- the agent core lives in pi-core.mjs, on @earendil-works/pi-agent-core ---
-// server.js is CommonJS and pi-core is ESM, so it is loaded once via dynamic
-// import() and the promise is cached. The Pi Agent runs each player turn and its
-// StreamFn (wrapping the claude CLI / openrouter backends) is contracted never to
-// throw — every failure, timeout, or abort comes back as a clean result object.
-let piCorePromise = null;
-function piCore() { return piCorePromise || (piCorePromise = import('./pi-core.mjs')); }
-
+// --- the agent core lives in pi-core.js, on @earendil-works/pi-agent-core ---
+// The Pi Agent runs each player turn; its StreamFn (wrapping the claude CLI /
+// openrouter backends) is contracted never to throw — every failure, timeout,
+// or abort comes back as a clean result object.
 function callModel(p, msg, cb, effort = EFFORT, maxTokens = 8000) { // cb(err, raw, stderr, thinking)
   let model = p.model || MODEL;
   // "or:" prefix forces the openrouter path (visible chain of thought, billed to the key) —
@@ -258,12 +259,11 @@ function callModel(p, msg, cb, effort = EFFORT, maxTokens = 8000) { // cb(err, r
   const backend = model.includes('/') ? 'openrouter' : 'claude-cli';
   let done = false;
   const once = (err, text, stderr, thinking) => { if (done) return; done = true; cb(err, text, stderr, thinking); };
-  piCore()
-    .then(({ runPlayerTurn }) => runPlayerTurn({
-      name: p.name, backend, model, sysFile, userMsg: msg,
-      effort, maxTokens, cwd: GAME, timeoutMs: TIMEOUT_MS,
-      openrouterKey: backend === 'openrouter' ? openrouterKey() : '',
-    }))
+  runPlayerTurn({
+    name: p.name, backend, model, sysFile, userMsg: msg,
+    effort, maxTokens, cwd: GAME, timeoutMs: TIMEOUT_MS,
+    openrouterKey: backend === 'openrouter' ? openrouterKey() : '',
+  })
     .then(r => once(r.error ? new Error(r.error) : null, r.text || '', r.stderr || '', r.thinking || ''))
     .catch(e => once(e, '', '', ''));
   return null;
@@ -719,7 +719,7 @@ function body(req) {
 const TOKEN_FILE = path.join(GAME, 'token');
 let TOKEN = process.env.CT_TOKEN || '';
 if (!TOKEN) { try { TOKEN = fs.readFileSync(TOKEN_FILE, 'utf8').trim(); } catch (e) {} }
-if (!TOKEN) { TOKEN = require('crypto').randomBytes(6).toString('hex'); fs.writeFileSync(TOKEN_FILE, TOKEN); }
+if (!TOKEN) { TOKEN = crypto.randomBytes(6).toString('hex'); fs.writeFileSync(TOKEN_FILE, TOKEN); }
 const PUBLIC_PATHS = new Set(['/whisper', '/whisper.html', '/api/roster', '/api/whisper',
   '/api/hear', '/api/miclevels', '/api/play/next', '/api/play/done']);
 const OPEN = process.env.CT_OPEN === '1';

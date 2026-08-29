@@ -4,6 +4,7 @@ node_modules/
 game/
 # scratch test artifacts (safe to delete)
 .fakebin/
+ct-*.js
 ct-*.mjs
 audio/venv/
 voices/venv/
