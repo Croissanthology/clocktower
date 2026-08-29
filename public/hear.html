@@ -106,7 +106,8 @@
 <script>
 const COLORS = ["#e5799f","#7fc7c0","#d9b84a","#c2a8ee","#8fbf6a","#e0925f","#7aa8e0","#cf7f7f"];
 let tape = [], lastId = 0, pick = null, showDropped = true, follow = true;
-let S = { mics:{}, stats:{}, humans:[], speaking:null, echoGuard:true, phase:"", ctxLen:0 };
+let S = { mics:{}, stMics:{}, storyteller:{}, stats:{}, humans:[], speaking:null, echoGuard:true, phase:"", ctxLen:0 };
+const ST_MIC = 0;   // the storyteller's own mic number, off the table roster entirely
 
 const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
 const colorOf = mic => COLORS[(Math.max(1, mic) - 1) % COLORS.length];
@@ -126,10 +127,13 @@ function rowHtml(h, prev, fresh) {
   const cls = "row " + (h.verdict === "kept" ? "" : h.verdict === "empty" ? "empty " : "drop ") + (fresh ? "fresh" : "");
   const mark = h.verdict === "kept" ? "&rarr; context"
     : h.verdict === "empty" ? "empty, ignored"
+    : h.verdict === "disabled" ? "storyteller feature off"
+    : h.verdict === "bleed" ? "bleed of another mic"
     : "echo guard" + (h.speaking ? " &middot; " + esc(h.speaking) : "");
-  parts.push(`<div class="${cls}" style="--c:${colorOf(h.mic)}" title="hear #${h.id}">
+  const tag = h.mic === ST_MIC ? `storyteller${h.name ? " &middot; " + esc(h.name) : ""}` : `mic ${h.mic}${h.name ? " &middot; " + esc(h.name) : ""}`;
+  parts.push(`<div class="${cls}" style="--c:${h.mic === ST_MIC ? "var(--ask,#d9b84a)" : colorOf(h.mic)}" title="hear #${h.id}">
     <span class="t">${hhmmss(h.ts)}</span>
-    <span class="tag">mic ${h.mic}${h.name ? " &middot; " + esc(h.name) : ""}</span>
+    <span class="tag">${tag}</span>
     <span class="txt">${h.text ? esc(h.text) : "(no text)"}</span>
     <span class="mark">${mark}</span></div>`);
   return parts.join("");
@@ -165,22 +169,43 @@ function laneCount() {
   return Math.max(fromMics, fromTape, fromRoster, 1);
 }
 function micFresh() { return S.mics && S.mics.running && (Date.now() - (S.mics.ts || 0) < 4000); }
+function stMicFresh() { return S.stMics && S.stMics.running && (Date.now() - (S.stMics.ts || 0) < 4000); }
 function render() {
   const on = micFresh();
-  const st = S.stats || {};
+  const stOn = stMicFresh();
+  const stat = S.stats || {};
+  const stName = (S.storyteller && S.storyteller.name) || "storyteller";
   document.getElementById("pills").innerHTML = [
     on ? `<span class="pill live">transcriber live &middot; <b>${esc(S.mics.device || "?")}</b> &middot; ${S.mics.channels || "?"} ch</span>`
        : (S.mics && S.mics.running ? `<span class="pill warn">transcriber starting...</span>`
                                    : `<span class="pill off">transcriber not running</span>`),
     S.mics && S.mics.err ? `<span class="pill off">${esc(S.mics.err)}</span>` : "",
-    `<span class="pill">heard <b>${st.total || 0}</b> &middot; kept <b>${st.kept || 0}</b> &middot; dropped <b>${(st["ai-speaking"] || 0) + (st.empty || 0)}</b></span>`,
+    stOn ? `<span class="pill live">${esc(stName)} live &middot; <b>${esc(S.stMics.device || "?")}</b></span>`
+         : (S.stMics && S.stMics.running ? `<span class="pill warn">${esc(stName)} starting...</span>`
+                                          : `<span class="pill off">${esc(stName)} not running</span>`),
+    S.stMics && S.stMics.err ? `<span class="pill off">${esc(S.stMics.err)}</span>` : "",
+    `<span class="pill">heard <b>${stat.total || 0}</b> &middot; kept <b>${stat.kept || 0}</b> &middot; dropped <b>${(stat["ai-speaking"] || 0) + (stat.empty || 0)}</b></span>`,
     S.speaking ? `<span class="pill warn"><b>${esc(S.speaking.player)}</b> is speaking &middot; mics muted</span>`
                : (S.echoGuard ? "" : `<span class="pill warn">echo guard off</span>`),
     `<span class="pill">${esc(S.phase || "")}</span>`,
   ].join("");
 
   const n = laneCount();
-  document.getElementById("lanes").innerHTML = Array.from({ length: n }, (_, i) => {
+  const stLevel = stOn ? ((S.stMics.levels || [])[0] || 0) : 0;
+  const stSpoke = stOn ? (S.stMics.speech_ago || [])[0] : null;
+  const stLines = tape.filter(x => x.mic === ST_MIC);
+  const stKept = stLines.filter(x => x.verdict === "kept").length;
+  const stLast = stLines.filter(x => x.text).slice(-1)[0];
+  const stCls = ["lane", !stOn ? "mute" : (stSpoke != null && stSpoke < 3 ? "hot" : ""),
+               pick === ST_MIC ? "sel" : "", pick != null && pick !== ST_MIC ? "dim" : ""].join(" ");
+  const stLane = `<div class="${stCls}" style="--c:var(--ask,#d9b84a)" onclick="pick=${pick === ST_MIC ? "null" : ST_MIC}; rebuild()">
+      <div class="top"><span class="dot"></span>
+        <span class="who">${esc(stName)} &middot; own mic</span>
+        <span class="n">${stKept}/${stLines.length}</span></div>
+      <div class="track"><div class="fill" style="width:${Math.min(100, Math.round(Math.sqrt(stLevel) * 250))}%"></div></div>
+      <div class="last">${stLast ? esc(stLast.text).slice(0, 120) : "nothing heard yet"}</div>
+    </div>`;
+  document.getElementById("lanes").innerHTML = stLane + Array.from({ length: n }, (_, i) => {
     const mic = i + 1;
     const h = (S.humans || []).find(x => x.mic == mic);
     const level = on ? (S.mics.levels[i] || 0) : 0;
@@ -199,7 +224,7 @@ function render() {
     </div>`;
   }).join("") + `<div class="legend">Each lane counts <b>kept/heard</b> lines.
     Kept lines go into the game context as <i>name: text</i>. Dropped lines never reach the AI players.
-    Names come from the mic roster in SETUP.</div>`;
+    Names come from the mic roster in SETUP. The storyteller's lane is his own private mic, not a table channel.</div>`;
 
   document.getElementById("b-drop").className = showDropped ? "on" : "";
   document.getElementById("b-follow").className = follow ? "on" : "";
@@ -218,7 +243,7 @@ function toggle(what) {
 async function poll() {
   try {
     const r = await fetch("/api/hears?since=" + lastId, { cache: "no-store" }).then(x => x.json());
-    Object.assign(S, { mics: r.mics || {}, stats: r.stats || {}, humans: r.humans || [],
+    Object.assign(S, { mics: r.mics || {}, stMics: r.stMics || {}, storyteller: r.storyteller || {}, stats: r.stats || {}, humans: r.humans || [],
       speaking: r.speaking, echoGuard: r.echoGuard, phase: r.phase, ctxLen: r.ctxLen });
     if (r.lastId < lastId) { tape = []; lastId = 0; rebuild(); return; } // server restarted: tape is gone
     const fresh = r.hears || [];

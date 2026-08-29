@@ -10,7 +10,10 @@ Audio is chunked into ~5s windows; each channel's RMS is checked against
 --threshold to skip silence; active channels are transcribed in parallel
 via a thread pool using whisper (mlx-whisper on Apple Silicon, falling
 back to faster-whisper if mlx isn't installed). Each transcription is
-POSTed to <server>/api/hear as {"mic": <1-based channel>, "text": "..."}.
+POSTed to <server>/api/hear as {"mic": <1-based channel>, "text": "...",
+"source": "table"}. With --source storyteller the daemon listens on a private
+device (airpods, a headset) and the server files every line under the
+Storyteller instead of the mic roster.
 If the server is unreachable, the line is printed instead and the daemon
 keeps running.
 
@@ -222,8 +225,8 @@ def transcribe_channel(audio_16k, lang, model_ref):
         raise RuntimeError("no whisper engine available")
 
 
-def post_or_print(server, dry_run, channel, text):
-    payload = {"mic": channel, "text": text}
+def post_or_print(server, dry_run, channel, text, source="table"):
+    payload = {"mic": channel, "text": text, "source": source}
     if dry_run or requests is None:
         print(f"  [dry-run] would POST {server}/api/hear  {payload}")
         return
@@ -240,6 +243,9 @@ def main():
     ap.add_argument("--device", help="input device name (substring) or index")
     ap.add_argument("--channels", type=int, default=1, help="requested channel count (clamped to device max)")
     ap.add_argument("--server", default="http://localhost:4141", help="game server base URL")
+    ap.add_argument("--source", default="table",
+                    help="who this daemon listens to: 'table' (the mic roster) or "
+                         "'storyteller' (a private device, e.g. airpods)")
     ap.add_argument("--lang", default=os.environ.get("CT_MIC_LANG", "en"), help="language code, or 'auto' to detect per chunk")
     ap.add_argument("--threshold", type=float, default=0.02, help="RMS silence threshold, 0..1 (default 0.02)")
     ap.add_argument("--prompt", default="", help="vocabulary hint for whisper (player names, game terms)")
@@ -327,6 +333,7 @@ def main():
                         "channels": n_channels,
                         "levels": [round(float(x), 4) for x in levels],
                         "speech_ago": [round(now - t, 1) if t else None for t in last_speech],
+                        "source": args.source,
                     },
                     timeout=1,
                 )
@@ -387,7 +394,7 @@ def main():
                 continue
             preview = text if len(text) <= 90 else text[:87] + "..."
             print(f"  channel {ch + 1}: \"{preview}\"")
-            post_or_print(args.server, args.dry_run, ch + 1, text)
+            post_or_print(args.server, args.dry_run, ch + 1, text, args.source)
 
     print(f"listening on '{dev['name']}' ({n_channels} channel(s))... Ctrl-C to stop")
     buffer = np.zeros((0, n_channels), dtype=np.float32)

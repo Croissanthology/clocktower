@@ -16,7 +16,9 @@ node server.js
 auto-refreshed); it's a fresh grant, independent of your Claude Code CLI login. Only
 needed for Anthropic models — openrouter models use `OPENROUTER_API_KEY` / `openrouter.key`.
 
-env knobs: `CT_MODEL` (default `sonnet`), `CT_EFFORT` (default `medium`), `PORT` (default 4141).
+env knobs: `CT_MODEL` (default `sonnet`), `CT_EFFORT` (default `medium`), `PORT` (default 4141),
+`CT_STORYTELLER` (default `Adam` — his name; also settable live in the mics panel or setup),
+`CT_ST_ASR` (engine for his transcriber, defaults to `CT_ASR`).
 
 ## the agent core (pi-core.js / pi-auth.js)
 
@@ -57,10 +59,17 @@ find/replace diffs (failures reported back to it). It acts by calling the tools 
   the AI's private box.
 - **↓ anywhere → CONTEXT, ↑ anywhere → home** (sheet editor and setup keep normal arrows).
   `esc` home; `1–4` open an AI when nothing is focused.
-- **setup** — AI rows (name/model/role/persona; blank name = model name) + human players:
-  pick how many, name each, mics are numbered in order. roster is injected into every AI's
-  briefing. dealing starts at night 1 and auto-fires first-night choosers.
+- **setup** — AI rows (name/model/role/persona; blank name = model name) + a storyteller name +
+  human players: pick how many, name each, mics are numbered in order. roster is injected into
+  every AI's briefing. dealing starts at night 1 and auto-fires first-night choosers.
 - **auto** — pushes the buffer every 30/45/60/90s; mid-turn AIs skipped; empty push = listen.
+- **mics** — the table transcriber (mixer channels) plus a separate **storyteller** row: pick
+  a private input device for him (airpods, a headset — never the table mixer) and start his own
+  transcriber. His lines reach every AI as `STORYTELLER (<name>):` and never go through a mic
+  number, so table crosstalk never gets attributed to him and his voice never gets attributed
+  to the table. An **enabled/disabled** toggle on that row is the whole feature's switch: off
+  drops any of his transcribed lines before they reach context, stops his mic, and briefings
+  stop mentioning that he wears one — off is the same behavior as before this feature existed.
 
 ## voting & day actions
 

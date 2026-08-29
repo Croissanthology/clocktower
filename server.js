@@ -38,7 +38,11 @@ const NIGHT_CHOOSERS = {
 
 fs.mkdirSync(GAME, { recursive: true });
 
-let state = { players: [], queue: [], ctx: [], humans: [], seats: [], whispers: [], auto: { tick: 'off', secs: 45, speak: false }, volume: 0.5, rate: 1.0, phase: { time: 'night', day: 1 }, hadFirstDay: false, turnN: 0, seq: 0, speaking: null, paused: false };
+// the Storyteller runs the game. He is not a player, but he talks to the table all
+// night, so he gets his own microphone (a private device — airpods, a headset — not a
+// channel on the table mixer) and every line he says lands in the shared context.
+const ST_DEFAULT = { name: process.env.CT_STORYTELLER || 'Adam', device: '', enabled: process.env.CT_STORYTELLER_OFF !== '1' };
+let state = { players: [], queue: [], ctx: [], humans: [], seats: [], whispers: [], storyteller: { ...ST_DEFAULT }, auto: { tick: 'off', secs: 45, speak: false }, volume: 0.5, rate: 1.0, phase: { time: 'night', day: 1 }, hadFirstDay: false, turnN: 0, seq: 0, speaking: null, paused: false };
 try {
   const disk = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
   state = Object.assign(state, disk);
@@ -58,6 +62,9 @@ try {
   if (!state.seats) state.seats = state.players.map(p => p.name).concat(state.humans.map(h => h.name));
   if (state.hadFirstDay === undefined) state.hadFirstDay = true;
   if (!state.whispers) state.whispers = [];
+  if (!state.storyteller) state.storyteller = { ...ST_DEFAULT };
+  if (!state.storyteller.name) state.storyteller.name = ST_DEFAULT.name;
+  if (state.storyteller.enabled === undefined) state.storyteller.enabled = true;
   if (!state.auto) state.auto = { tick: 'off', secs: 45, speak: false };
   if (state.volume === undefined) state.volume = 0.5;
   if (state.rate === undefined) state.rate = +PLAY_RATE_DEFAULT;
@@ -91,10 +98,23 @@ function nightN() { return state.hadFirstDay ? state.phase.day + 1 : state.phase
 function phaseLabel() { return state.phase.time === 'day' ? `day ${state.phase.day}` : `night ${nightN()}`; }
 function ctxAppend(e) { state.ctx.push({ ...e, ts: Date.now() }); }
 
+function stName() { return (state.storyteller && state.storyteller.name) || ST_DEFAULT.name; }
+function stEnabled() { return !!(state.storyteller && state.storyteller.enabled); }
 function roster() {
   const humans = state.humans.filter(h => h.name).map(h => `${h.name} (mic ${h.mic})`).join(', ');
   const ais = state.players.map(p => p.name).join(', ');
-  return `AT THE TABLE — human players: ${humans || '(to be announced)'}. AI players: ${ais}.`;
+  let out = `AT THE TABLE — human players: ${humans || '(to be announced)'}. AI players: ${ais}.`;
+  if (stEnabled()) {
+    out += `\nRUNNING THE GAME — Storyteller: ${stName()}. He wears his own microphone, so you hear him directly: ` +
+      `a transcript line that starts \`STORYTELLER (${stName()}):\` is him speaking aloud to the whole table. ` +
+      `Out of game his rulings are final and true; in game, what he says can still be part of the story he is telling.`;
+  }
+  return out;
+}
+// the {{STORYTELLER_NOTE}} sentence in the template — only true when his mic feature is on
+function storytellerNote() {
+  if (!stEnabled()) return '';
+  return ` The Storyteller wears a microphone too: lines that start \`STORYTELLER (${stName()}):\` are him speaking aloud to the whole table. Treat his procedural words — who is nominated, what the vote count is, who dies, what the phase is — as true and final. What he says while telling the story is still the story.`;
 }
 
 function seatingFor(p) {
@@ -114,6 +134,8 @@ function sysPromptPath(p) {
   const tpl = fs.readFileSync(TEMPLATE_FILE, 'utf8');
   // shared prefix (template+roster+rules) is byte-identical across players (prompt cache); card+seating last
   fs.writeFileSync(file, tpl.replace('{{ROSTER}}', roster()).replace('{{RULES}}', rules)
+    .replace('{{STORYTELLER_NOTE}}', storytellerNote())
+    .replace(/{{STORYTELLER}}/g, stName())
     .replace(/{{NAME}}/g, p.name).replace('{{CARD}}', p.card).replace('{{SEATING}}', seatingFor(p)));
   return file;
 }
@@ -154,6 +176,7 @@ function ctxSlice(p) {
   return unseen.map(e => {
     if (e.kind === 'say') return `${e.player} (AI, aloud)${e.to && e.to !== 'town' ? ' to ' + e.to : ''}: ${e.text}`;
     if (e.kind === 'note') return `MARGOT: ${e.text}`;
+    if (e.kind === 'st') return `STORYTELLER (${stName()}): ${e.text}`;
     if (e.kind === 'phase') return `GAME: ${e.text}`;
     return e.text;
   }).join('\n');
@@ -166,6 +189,7 @@ function renderCtx(entries) {
   return entries.map(e => {
     if (e.kind === 'say') return `${e.player} (AI, aloud)${e.to && e.to !== 'town' ? ' to ' + e.to : ''}: ${e.text}`;
     if (e.kind === 'note') return `MARGOT: ${e.text}`;
+    if (e.kind === 'st') return `STORYTELLER (${stName()}): ${e.text}`;
     if (e.kind === 'phase') return `GAME: ${e.text}`;
     return e.text;
   }).join('\n');
@@ -419,9 +443,14 @@ let modelsCache = { ts: 0, list: [] };
 
 // --- mic monitoring: the server owns the transcriber process ---
 const AUDIO_PY = path.join(ROOT, 'audio', 'venv', 'bin', 'python');
+const ST_MIC = 0;   // the Storyteller's mic number; table channels are 1-based, so 0 is free
 let micProc = null;
 let speakEndedAt = 0; // echo guard tail: room reverb + chunk boundary after an AI stops speaking
 let mics = { running: false, device: '', channels: 0, levels: [], speech_ago: [], ts: 0, err: '' };
+// the Storyteller's own transcriber: a second daemon on a private input device
+// (airpods, a headset), one channel, posting with source=storyteller
+let stProc = null;
+let stMics = { running: false, device: '', channels: 1, levels: [], speech_ago: [], ts: 0, err: '' };
 let inputsCache = { ts: 0, list: [] };
 
 // --- the hear tape: every line the transcriber posts, kept in memory for the /hear monitor ---
@@ -432,7 +461,8 @@ let hearSeq = 0;
 let hearStats = { total: 0, kept: 0, 'ai-speaking': 0, empty: 0 };
 function recordHear(mic, text, verdict) {
   const h = state.humans.find(x => x.mic == mic);
-  hears.push({ id: ++hearSeq, ts: Date.now(), mic, name: (h && h.name) || '', text, verdict,
+  const who = mic === ST_MIC ? stName() : (h && h.name) || '';
+  hears.push({ id: ++hearSeq, ts: Date.now(), mic, name: who, text, verdict,
     speaking: state.speaking ? state.speaking.player : '' });
   if (hears.length > HEARS_MAX) hears.splice(0, hears.length - HEARS_MAX);
   hearStats.total++;
@@ -440,7 +470,7 @@ function recordHear(mic, text, verdict) {
 }
 
 function micVocab() {
-  const names = new Set(['Margot', 'Adam', 'Storyteller']);
+  const names = new Set(['Margot', 'Storyteller', stName()]);
   for (const p of state.players) names.add(p.name);
   for (const h of state.humans) if (h.name) names.add(h.name);
   const roles = [];
@@ -450,39 +480,74 @@ function micVocab() {
   } catch (e) {}
   return `Blood on the Clocktower at ratcamp. Players: ${[...names].join(', ')}. Roles: ${roles.join(', ')}. Nominate, execute, the Demon, the Imp, good, evil, ghost vote.`;
 }
-function micStart(device, channels) {
-  if (micProc) return;
-  mics = { running: true, device, channels, levels: [], speech_ago: [], ts: 0, err: '' };
-  let errTail = '';
-  // CT_ASR=parakeet spawns adam's transcribe_parakeet.py (silero-vad + parakeet-mlx) instead of whisper
-  const parakeet = process.env.CT_ASR === 'parakeet';
+// one transcriber daemon. `source` is 'table' (the mixer, one channel per seat) or
+// 'storyteller' (a private device on one channel); the server files each line by it.
+// `st` is the status object the daemon's own reports and errors are written into.
+function spawnTranscriber(source, device, channels, st, logName) {
+  // CT_ASR=parakeet spawns adam's transcribe_parakeet.py (silero-vad + parakeet-mlx) instead of whisper.
+  // the Storyteller's daemon may pick the other engine with CT_ST_ASR (a second parakeet
+  // loads a second 2.3GB model and shares one GPU, so whisper is the cheaper roommate).
+  const asr = source === 'storyteller' ? (process.env.CT_ST_ASR || process.env.CT_ASR) : process.env.CT_ASR;
+  const parakeet = asr === 'parakeet';
+  const common = ['--device', device, '--channels', String(channels), '--server', `http://localhost:${PORT}`, '--source', source];
   const args = parakeet
-    ? ['-u', path.join(ROOT, 'audio', 'transcribe_parakeet.py'), '--device', device, '--channels', String(channels), '--server', `http://localhost:${PORT}`]
-    : [path.join(ROOT, 'audio', 'transcribe.py'), '--device', device, '--channels', String(channels), '--server', `http://localhost:${PORT}`,
+    ? ['-u', path.join(ROOT, 'audio', 'transcribe_parakeet.py'), ...common]
+    : [path.join(ROOT, 'audio', 'transcribe.py'), ...common,
        '--threshold', process.env.CT_MIC_THRESHOLD || '0.02', '--prompt', micVocab()];
-  mics.engine = parakeet ? 'parakeet' : 'whisper';
-  micProc = execFile(AUDIO_PY, args,
-    { maxBuffer: 50 * 1024 * 1024 }, (err) => {
-      micProc = null;
-      mics.running = false;
-      if (err && !err.killed) mics.err = (errTail.trim().split('\n').pop() || String(err)).slice(0, 200);
-    });
-  // keep the transcriber's chatter: game/mic.log, and parakeet's one-shot input check surfaced in the mics panel
-  const micLog = fs.createWriteStream(path.join(GAME, 'mic.log'), { flags: 'a' });
+  st.engine = parakeet ? 'parakeet' : 'whisper';
+  let errTail = '';
+  const proc = execFile(AUDIO_PY, args, { maxBuffer: 50 * 1024 * 1024 }, (err) => {
+    st.running = false;
+    if (err && !err.killed) st.err = (errTail.trim().split('\n').pop() || String(err)).slice(0, 200);
+  });
+  // keep the transcriber's chatter: game/<log>.log, and parakeet's one-shot input check surfaced in the mics panel
+  const micLog = fs.createWriteStream(path.join(GAME, logName), { flags: 'a' });
   let checkBuf = '';
   const onData = d => {
     micLog.write(d); errTail = (errTail + d).slice(-2000);
     const t = String(d);
-    if (checkBuf || /input check/.test(t)) { checkBuf += t; if (checkBuf.length > 1500) checkBuf = checkBuf.slice(0, 1500); mics.check = checkBuf.slice(checkBuf.indexOf('input check')); }
+    if (checkBuf || /input check/.test(t)) { checkBuf += t; if (checkBuf.length > 1500) checkBuf = checkBuf.slice(0, 1500); st.check = checkBuf.slice(checkBuf.indexOf('input check')); }
   };
-  micProc.stderr.on('data', onData);
-  micProc.stdout.on('data', onData);
+  proc.stderr.on('data', onData);
+  proc.stdout.on('data', onData);
+  return proc;
+}
+// kill transcribers this server process doesn't own (orphans from a restart, terminal runs).
+// the two daemons are told apart by their --source, so stopping one never stops the other;
+// a daemon started before --source existed has none, and counts as a table daemon.
+function killOrphans(source) {
+  execFile('pgrep', ['-fa', 'audio/transcribe'], (err, stdout) => {
+    for (const line of String(stdout || '').split('\n')) {
+      const m = line.match(/^(\d+)\s+(.*)$/);
+      if (!m) continue;
+      const its = /--source\s+storyteller/.test(m[2]) ? 'storyteller' : 'table';
+      if (its !== source) continue;
+      try { process.kill(+m[1], 'SIGTERM'); } catch (e) {}
+    }
+  });
+}
+function micStart(device, channels) {
+  if (micProc) return;
+  mics = { running: true, device, channels, levels: [], speech_ago: [], ts: 0, err: '' };
+  micProc = spawnTranscriber('table', device, channels, mics, 'mic.log');
+  micProc.on('exit', () => { micProc = null; });
 }
 function micStop() {
   if (micProc) try { micProc.kill('SIGTERM'); } catch (e) {}
-  // also catch transcribers this server process doesn't own (orphans from a restart, terminal runs)
-  execFile('pkill', ['-f', 'audio/transcribe'], () => {});
+  killOrphans('table');
   mics.running = false;
+}
+// the Storyteller's mic: always one channel, on whatever input device he wears
+function stMicStart(device) {
+  if (stProc) return;
+  stMics = { running: true, device, channels: 1, levels: [], speech_ago: [], ts: 0, err: '' };
+  stProc = spawnTranscriber('storyteller', device, 1, stMics, 'mic-st.log');
+  stProc.on('exit', () => { stProc = null; });
+}
+function stMicStop() {
+  if (stProc) try { stProc.kill('SIGTERM'); } catch (e) {}
+  killOrphans('storyteller');
+  stMics.running = false;
 }
 function voiceFor(idx, p) {
   if (p.voice) return p.voice;
@@ -719,7 +784,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/api/state') {
     // the poll is every 1.2 s from several screens: ship only what the screens draw (recent history, no prompt bodies past the last 3)
     const players = state.players.map(p => ({ ...p, history: p.history.slice(-8).map((h, i, arr) => i < arr.length - 3 ? { ...h, input: '', thinking: '' } : h) }));
-    return send(200, { ...state, players, ctx: state.ctx.slice(-300), phaseLabel: phaseLabel(), rulesLoaded: fs.existsSync(RULES_FILE), model: MODEL, mics, lanUrl: `http://${lanIp()}:${PORT}/whisper`, wranglerUrl: wranglerUrl(),
+    return send(200, { ...state, players, ctx: state.ctx.slice(-300), phaseLabel: phaseLabel(), rulesLoaded: fs.existsSync(RULES_FILE), model: MODEL, mics, stMics, lanUrl: `http://${lanIp()}:${PORT}/whisper`, wranglerUrl: wranglerUrl(),
       play: { remote: REMOTE_PLAY, agentAlive: REMOTE_PLAY && Date.now() - agentSeen < 5000, pending: playJobs.length },
       portals: [...portals].filter(([, t]) => Date.now() - t < 6000).map(([a]) => a.replace('::ffff:', '')) });
   }
@@ -760,7 +825,8 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/miclevels') {
     const b = await body(req);
     // any transcriber posting levels counts as running (server-spawned, terminal-run, or orphaned)
-    Object.assign(mics, { running: true, levels: b.levels || [], speech_ago: b.speech_ago || [], channels: b.channels || mics.channels, device: b.device || mics.device, ts: Date.now() });
+    const st = b.source === 'storyteller' ? stMics : mics;
+    Object.assign(st, { running: true, levels: b.levels || [], speech_ago: b.speech_ago || [], channels: b.channels || st.channels, device: b.device || st.device, ts: Date.now() });
     return send(200, { ok: true });
   }
   if (req.method === 'POST' && url.pathname === '/api/mic/start') {
@@ -772,6 +838,35 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/mic/stop') {
     micStop();
     return send(200, { ok: true });
+  }
+  // --- the Storyteller's own microphone: a second daemon on a private input device ---
+  if (req.method === 'POST' && url.pathname === '/api/mic/st/start') {
+    if (!stEnabled()) return send(400, { err: 'storyteller feature is disabled' });
+    const b = await body(req);
+    const device = (b.device || state.storyteller.device || '').trim();
+    if (!device) return send(400, { err: 'device required' });
+    state.storyteller.device = device;
+    save();
+    stMicStart(device);
+    return send(200, { ok: true, storyteller: state.storyteller });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/mic/st/stop') {
+    stMicStop();
+    return send(200, { ok: true });
+  }
+  // name, device, and the on/off switch, settable mid-game; briefings pick it up on the next push.
+  // turning it off also stops his transcriber — a disabled feature should not keep listening.
+  if (req.method === 'POST' && url.pathname === '/api/storyteller') {
+    const b = await body(req);
+    if (typeof b.name === 'string' && b.name.trim()) state.storyteller.name = b.name.trim();
+    if (typeof b.device === 'string') state.storyteller.device = b.device.trim();
+    if (b.enabled !== undefined) {
+      state.storyteller.enabled = !!b.enabled;
+      if (!state.storyteller.enabled) stMicStop();
+    }
+    state.players.forEach(sysPromptPath);
+    save();
+    return send(200, { ok: true, storyteller: state.storyteller });
   }
   if (req.method === 'GET' && url.pathname === '/api/inputs') {
     if (Date.now() - inputsCache.ts < 30000) return send(200, { inputs: inputsCache.list });
@@ -795,15 +890,18 @@ function similarity(a, b) {
 }
 const recentHears = []; // {ts, mic, key}
 function hearKey(t) { return t.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim(); }
-function isBleed(text, mic) {
+// `exempt` marks a mic that always wins the attribution: the Storyteller wears his own
+// close mic, so when the table mics also pick him up, his line is the one that is kept.
+// It still registers, so the table's copy arriving a moment later is dropped as bleed.
+function isBleed(text, mic, exempt) {
   const now = Date.now(), key = hearKey(text);
   while (recentHears.length && now - recentHears[0].ts > 8000) recentHears.shift();
-  const dup = recentHears.some(h => h.mic !== mic && (h.key === key || h.key.includes(key) || key.includes(h.key) || similarity(h.key, key) >= 0.8));
+  const dup = !exempt && recentHears.some(h => h.mic !== mic && (h.key === key || h.key.includes(key) || key.includes(h.key) || similarity(h.key, key) >= 0.8));
   if (!dup) recentHears.push({ ts: now, mic, key });
   return dup;
 }
 function fixNames(text) {
-  const names = ['Margot', 'Adam'].concat(state.players.map(p => p.name), state.humans.map(h => h.name)).filter(n => n && n.length >= 4);
+  const names = ['Margot', stName()].concat(state.players.map(p => p.name), state.humans.map(h => h.name)).filter(n => n && n.length >= 4);
   if (!names.length) return text;
   return text.replace(/[A-Za-z][A-Za-z'-]{2,}/g, (w, off) => {
     const sentenceStart = off === 0 || /[.!?]\s*$/.test(text.slice(Math.max(0, off - 3), off));
@@ -817,20 +915,32 @@ function fixNames(text) {
   });
 }
 
-  // live whisper transcription lands here: {mic: <1-based channel>, text: "..."}
+  // live transcription lands here: {mic: <1-based channel>, text: "...", source: "table"|"storyteller"}
   if (req.method === 'POST' && url.pathname === '/api/hear') {
     const b = await body(req);
     const t = fixNames(String(b.text || '').trim());
-    const mic = +b.mic || 0;
+    const isSt = b.source === 'storyteller';
+    const mic = isSt ? ST_MIC : (+b.mic || 0);
+    // the feature toggle is the master switch: a stray daemon still posting after it's
+    // turned off (or before the stop signal lands) never reaches the game context
+    if (isSt && !stEnabled()) { recordHear(mic, t, 'disabled'); return send(200, { ok: true, dropped: 'disabled' }); }
     // bleed guard, whatever the engine: the same words arriving from another mic within a few seconds is one utterance, not two
-    if (t && isBleed(t, mic)) { recordHear(mic, t, 'bleed'); return send(200, { ok: true, dropped: 'bleed' }); }
+    if (t && isBleed(t, mic, isSt)) { recordHear(mic, t, 'bleed'); return send(200, { ok: true, dropped: 'bleed' }); }
     // echo guard: while an AI is speaking, table mics mostly pick up the AI's own speaker —
-    // that text is already in context via delivery, so drop it instead of double-hearing it
-    const guarded = (state.speaking || Date.now() - speakEndedAt < 2000) && process.env.CT_ECHO_GUARD !== '0';
+    // that text is already in context via delivery, so drop it instead of double-hearing it.
+    // the Storyteller's mic is guarded too (an earpiece still hears the room), unless
+    // CT_ST_ECHO_GUARD=0 — set that when he needs to talk over an AI line.
+    const guard = isSt ? process.env.CT_ST_ECHO_GUARD !== '0' : process.env.CT_ECHO_GUARD !== '0';
+    const guarded = (state.speaking || Date.now() - speakEndedAt < 2000) && guard;
     if (guarded) { recordHear(mic, t, 'ai-speaking'); return send(200, { ok: true, dropped: 'ai-speaking' }); }
     if (t) {
-      const h = state.humans.find(x => x.mic == mic);
-      ctxAppend({ kind: 'town', text: `${h && h.name ? h.name : 'mic ' + mic}: ${t}` });
+      // the Storyteller gets his own ctx kind, so his name renders live and every screen
+      // can mark him apart from the players he is talking to
+      if (isSt) ctxAppend({ kind: 'st', text: t });
+      else {
+        const h = state.humans.find(x => x.mic == mic);
+        ctxAppend({ kind: 'town', text: `${h && h.name ? h.name : 'mic ' + mic}: ${t}` });
+      }
       recordHear(mic, t, 'kept');
       save();
     } else recordHear(mic, t, 'empty');
@@ -841,7 +951,7 @@ function fixNames(text) {
     const since = +url.searchParams.get('since') || 0;
     return send(200, {
       hears: hears.filter(h => h.id > since), lastId: hearSeq, stats: hearStats,
-      mics, humans: state.humans, speaking: state.speaking,
+      mics, stMics, storyteller: state.storyteller, humans: state.humans, speaking: state.speaking,
       echoGuard: process.env.CT_ECHO_GUARD !== '0', phase: phaseLabel(), ctxLen: state.ctx.length,
     });
   }
@@ -960,6 +1070,9 @@ function fixNames(text) {
       };
     });
     state.humans = (b.humans || []).map((h, i) => ({ name: (h.name || '').trim(), mic: h.mic || i + 1 })).filter(h => h.name);
+    // the Storyteller is not dealt a seat or a card, but his name rides in every briefing;
+    // his mic device is hardware, so it carries over the deal like the speaker channels do
+    if (b.storyteller && String(b.storyteller).trim()) state.storyteller.name = String(b.storyteller).trim();
     state.seats = (b.seats && b.seats.length) ? b.seats : state.players.map(p => p.name).concat(state.humans.map(h => h.name));
     for (const f of fs.readdirSync(GAME)) if (/^speech-.*\.(wav|aiff)$/.test(f)) try { fs.unlinkSync(path.join(GAME, f)); } catch (e) {}
     state.queue = []; state.ctx = []; state.whispers = []; state.turnN = 0; state.seq = 0;
@@ -969,6 +1082,7 @@ function fixNames(text) {
     save();
     // the transcriber learns names at start: bounce it so the new roster is in its vocabulary
     if (micProc) { const { device, channels } = mics; micStop(); setTimeout(() => micStart(device, channels), 1500); }
+    if (stProc) { const { device } = stMics; stMicStop(); setTimeout(() => stMicStart(device), 1500); }
     pushNightChoosers();
     return send(200, { ok: true });
   }
@@ -1032,8 +1146,9 @@ function fixNames(text) {
   if (req.method === 'POST' && url.pathname === '/api/humans') {
     const b = await body(req);
     state.humans = (b.humans || []).map((h, i) => ({ name: (h.name || '').trim(), mic: h.mic || i + 1 })).filter(h => h.name);
+    if (b.storyteller && String(b.storyteller).trim()) state.storyteller.name = String(b.storyteller).trim();
     state.players.forEach(sysPromptPath);
-    save(); return send(200, { ok: true, humans: state.humans });
+    save(); return send(200, { ok: true, humans: state.humans, storyteller: state.storyteller });
   }
   if (req.method === 'POST' && url.pathname === '/api/pause') {
     const b = await body(req);
@@ -1047,6 +1162,13 @@ function fixNames(text) {
     return send(200, { ok: true, phase: state.phase });
   }
   send(404, { err: 'not found' });
+});
+
+// the transcribers are children of this process: take them down with it, or the next
+// start finds the input device busy
+for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => {
+  try { micStop(); stMicStop(); } catch (e) {}
+  setTimeout(() => process.exit(0), 200);
 });
 
 // after a restart, queued lines without audio go back into the synth line, oldest first

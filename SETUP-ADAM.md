@@ -29,7 +29,13 @@ what to know:
 - `CT_AUDIO_DEVICE=UMC1820` = play each AI on its own output channel (set channels in the mics panel, test buttons). omit → default output.
 - `CT_PLAY=remote` = the interface is on *another* machine running `audio/play_agent.py --server http://<this-ip>:4141 --device UMC1820`.
 - `CT_BELL=0` silences the bell before each AI line. `CT_MIC_THRESHOLD` only matters for whisper.
+- the storyteller gets his own transcriber, on his own device (airpods, a headset — not the
+  UMC): pick it in the mics panel's storyteller row and hit start. `CT_STORYTELLER` sets his
+  name up front; `CT_ST_ASR` picks his engine if you want it to differ from `CT_ASR`. His lines
+  reach every AI as `STORYTELLER (<name>):`, apart from the table mic roster entirely.
+  `CT_STORYTELLER_OFF=1` starts the game with the whole feature off; the mics panel's
+  enabled/disabled button toggles it live any time (off = no mic, no mention in briefings).
 - ambience for the hidden speaker, any machine on the LAN with the repo: `audio/venv/bin/python audio/ambience.py --device "<bluetooth speaker name>"` (`--list` to find it, `--rain 0` for no rain, `--no-clock`).
 - openrouter is not needed: setup defaults to fable / opus / sonnet / haiku on the subscription. an `openrouter.key` file enables the other models in the dropdown.
 
-order of operations before a game: plug UMC (PSU on, +48V on both banks, speakers powered) → start server → setup: 4 AIs + the 8 humans by mic number → deal → mics panel: start, then everyone says their name into their lav and you read the hear monitor → speaker test buttons, type channel numbers → auto lull + auto-speak on → play.
+order of operations before a game: plug UMC (PSU on, +48V on both banks, speakers powered) → start server → setup: 4 AIs + the 8 humans by mic number + storyteller name → deal → mics panel: start the table transcriber, then everyone says their name into their lav and you read the hear monitor; also start the storyteller's own transcriber on his airpods/headset → speaker test buttons, type channel numbers → auto lull + auto-speak on → play.

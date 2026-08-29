@@ -84,6 +84,7 @@
             border-bottom:1px solid var(--line); padding-bottom:3px; }
   .f-line { white-space:pre-wrap; }
   .f-margot { color:var(--marg); }
+  .f-st { color:var(--ask); }
   .f-game { color:var(--dim); font-style:italic; }
   .f-head { color:var(--dim); font-size:12px; letter-spacing:.04em; margin-top:8px; }
   .f-out { border-left:2px solid var(--c, var(--line)); padding-left:12px; margin:8px 0 4px; }
@@ -197,6 +198,8 @@
              border-bottom:1px solid var(--line); padding-bottom:4px; }
   .s-town { white-space:pre-wrap; margin:2px 0; }
   .s-note { color:var(--dim); font-style:italic; white-space:pre-wrap; margin:2px 0; }
+  .s-st { color:var(--ask); white-space:pre-wrap; margin:2px 0; }
+  .s-st b { color:var(--ask); }
   .s-say { white-space:pre-wrap; margin:2px 0; }
   .s-say b { color:var(--c); }
   .ctx-in { display:flex; gap:10px; flex-shrink:0; align-items:flex-end; }
@@ -370,6 +373,7 @@ function nav(name, ai){
           const h=S.humans.find(x=>x.mic===i+1); return h?h.name:""; });
       }
     }
+    if (!ui.stName) ui.stName = (S.storyteller&&S.storyteller.name) || "Adam";
     const opts = r=>Object.entries(ROLES).map(([g,rs])=>`<optgroup label="${g}">${rs.map(x=>`<option ${x===r?"selected":""}>${x}</option>`).join("")}</optgroup>`).join("");
     v.innerHTML = `<div class="setup">
       <h4>ai players</h4>
@@ -381,6 +385,9 @@ function nav(name, ai){
         <input class="persona" value="${esc(r.persona)}" onchange="ui.setupRows[${i}].persona=this.value" placeholder="persona (optional)">
         ${r.on?`<button class="rowx" title="remove from game" onclick="event.stopPropagation();ui.setupRows[${i}].on=false;nav('setup')">&times;</button>`:""}
       </div>`).join("")}
+      <h4>storyteller</h4>
+      <div class="hrow"><span class="mic">runs the game</span>
+        <input value="${esc(ui.stName)}" placeholder="storyteller name" onchange="ui.stName=this.value"></div>
       <h4>human players — <select style="width:64px;display:inline-block" onchange="setHumanCount(+this.value)">
         ${[2,3,4,5,6,7,8,9,10].map(n=>`<option ${n===ui.humanCount?"selected":""}>${n}</option>`).join("")}</select> of them</h4>
       ${Array.from({length:ui.humanCount},(_,i)=>`<div class="hrow"><span class="mic">mic ${i+1}</span>
@@ -398,7 +405,7 @@ function nav(name, ai){
 }
 async function saveMics(){
   const humans = ui.humanNames.slice(0,ui.humanCount).map((n,i)=>({name:n, mic:i+1}));
-  await api("/api/humans",{humans}); nav("home");
+  await api("/api/humans",{humans, storyteller:ui.stName}); nav("home");
 }
 // mirror the server's player-naming so the circle shows names as they will be dealt
 function setupNames(){
@@ -494,7 +501,11 @@ function micWidget(){
   const lv = on ? S.mics.levels : [0,0,0];
   const bars = (lv.length?lv:[0,0,0]).slice(0,8).map(l=>
     `<div class="bar" style="height:${Math.max(2,Math.min(20,Math.round(Math.sqrt(l)*55)))}px"></div>`).join("");
-  return `<div class="micw ${on?"":"off"}" onclick="nav('mics')" title="mics">${bars}</div>`;
+  const stOn = stFresh();
+  const stDot = (S.storyteller && S.storyteller.enabled)
+    ? `<span class="mdot" style="background:${stOn?"var(--good)":"var(--bad)"};margin-left:6px" title="${esc((S.storyteller&&S.storyteller.name)||"storyteller")}'s mic: ${stOn?"live":"offline"}"></span>`
+    : "";
+  return `<div class="micw ${on?"":"off"}" onclick="nav('mics')" title="mics">${bars}${stDot}</div>`;
 }
 async function loadInputs(){
   const r = await api("/api/inputs");
@@ -504,7 +515,57 @@ async function loadInputs(){
     const pick = umc || ui.inputs[0];
     ui.micDevice = pick.name; ui.micChannels = Math.min(8, pick.in);
   }
+  // the storyteller wears his own device: prefer the saved one, else a headset, never the mixer
+  if (!ui.stDevice) ui.stDevice = (S.storyteller&&S.storyteller.device) || "";
+  if (!ui.stDevice && ui.inputs.length){
+    const pod = ui.inputs.find(d=>/airpod|headset|headphone|buds/i.test(d.name));
+    const notMixer = ui.inputs.find(d=>!/umc|u-phoria/i.test(d.name));
+    ui.stDevice = (pod || notMixer || ui.inputs[0]).name;
+  }
   if (view.name==="mics") renderMics();
+}
+function stFresh(){ return S.stMics && S.stMics.running && (Date.now()-S.stMics.ts < 4000); }
+// the storyteller's row: name, his own input device, and what it is hearing right now
+function toggleStoryteller(){
+  const enabled = !(S.storyteller && S.storyteller.enabled);
+  api('/api/storyteller',{enabled}).then(async()=>{ S=await api('/api/state'); renderMics(); });
+}
+function stBlock(){
+  const on = stFresh();
+  const st = S.storyteller||{};
+  const enabled = !!st.enabled;
+  const running = S.stMics && S.stMics.running;
+  const toggle = `<button class="${enabled?"on":""}" onclick="toggleStoryteller()" title="turn the storyteller's mic feature on or off">${enabled?"enabled":"disabled"}</button>`;
+  if (!enabled){
+    return `<h4 style="margin:18px 0 8px;display:flex;align-items:center;gap:10px">storyteller ${toggle}</h4>
+    <div class="hint">off — no mic, and briefings don't mention a storyteller microphone. flip it on to wire up a private
+      input device (airpods, a headset) so his lines reach every AI as <i>STORYTELLER (${esc(st.name||"")}):</i>.</div>`;
+  }
+  const opts = (ui.inputs||[]).map(d=>`<option value="${esc(d.name)}" ${d.name===ui.stDevice?"selected":""}>${esc(d.name)} (${d.in} in)</option>`).join("");
+  const level = on ? ((S.stMics.levels||[])[0]||0) : 0;
+  const ago = on ? (S.stMics.speech_ago||[])[0] : null;
+  const dot = !on ? "var(--bad)" : (ago!=null && ago<3 ? "var(--good)" : "var(--dim)");
+  return `<h4 style="margin:18px 0 8px;display:flex;align-items:center;gap:10px">storyteller ${toggle}</h4>
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">
+      <input value="${esc(st.name||"")}" placeholder="storyteller name" style="width:150px"
+        onchange="api('/api/storyteller',{name:this.value})">
+      <select style="flex:1" onchange="ui.stDevice=this.value; api('/api/storyteller',{device:this.value}); renderMics()">${opts||"<option>no input devices found</option>"}</select>
+      ${running
+        ? `<button onclick="api('/api/mic/st/stop',{}).then(()=>renderMics())">stop</button>`
+        : `<button class="on" onclick="api('/api/mic/st/start',{device:ui.stDevice}).then(()=>renderMics())">start</button>`}
+    </div>
+    ${running && !on?`<div style="color:var(--dim);margin-bottom:10px">starting — storyteller transcriber warming up...</div>`:""}
+    ${S.stMics && S.stMics.err?`<div class="err" style="margin-bottom:10px">${esc(S.stMics.err)}</div>`:""}
+    <div style="border:1px solid var(--line);border-radius:10px;background:var(--panel)">
+      <div class="mic-row">
+        <span class="mdot" style="background:${dot}"></span>
+        <span class="who">${esc(st.name||"storyteller")} — own mic</span>
+        <div class="track"><div class="fill" style="width:${Math.min(100,Math.round(Math.sqrt(level)*250))}%"></div></div>
+        <span style="color:var(--dim);font-size:12px;width:90px">${!on?"offline":(ago!=null&&ago<3?"speech":"open, quiet")}</span>
+      </div>
+    </div>
+    <div class="hint" style="margin-top:8px">a separate device from the table mixer — airpods, a headset. his lines reach every AI as
+      <i>STORYTELLER (${esc(st.name||"")}): ...</i>, and his name goes into every briefing.</div>`;
 }
 function renderMics(){
   const el = document.getElementById("mics-body"); if(!el) return;
@@ -537,6 +598,7 @@ function renderMics(){
     ${S.mics && S.mics.err?`<div class="err" style="margin-bottom:10px">${esc(S.mics.err)}</div>`:""}
     ${S.mics && S.mics.check?`<pre style="font-size:12px;color:var(--dim);margin:0 0 10px;white-space:pre-wrap">${esc(S.mics.check)}</pre>`:""}
     <div style="border:1px solid var(--line);border-radius:10px;background:var(--panel)">${rows}</div>
+    ${stBlock()}
     <h4 style="margin:18px 0 8px">speakers</h4>
       <div class="mic-row"><span class="who">volume</span>
         <input type="range" min="0" max="1" step="0.05" value="${S.volume??0.5}" style="flex:1;padding:0" oninput="api('/api/auto',{volume:+this.value})">
@@ -559,6 +621,7 @@ function feedLines(text, extraCls){
   return text.split("\n").map(l=>{
     let cls = "f-line "+(extraCls||"");
     if (/^MARGOT[,:]/.test(l) || /^=== MARGOT, PRIVATELY/.test(l)) cls += " f-margot";
+    else if (/^STORYTELLER \(/.test(l)) cls += " f-st";
     else if (/^GAME:/.test(l)) cls += " f-game";
     else if (/^===|^--NIGHT--|^--DAY--/.test(l)) cls += " f-head";
     return `<div class="${cls}">${esc(l)||"&nbsp;"}</div>`;
@@ -710,6 +773,7 @@ function update(){
         if (e.kind==="phase") return `<div class="s-phase">${esc(e.text)}</div>`;
         if (e.kind==="say") return `<div class="s-say" style="--c:${colorOf(e.player)}"><b>${esc(e.player)}${e.to&&e.to!=="town"?" &rsaquo; "+esc(e.to):""}</b> ${esc(e.text)}</div>`;
         if (e.kind==="note") return `<div class="s-note">! ${esc(e.text)}</div>`;
+        if (e.kind==="st") return `<div class="s-st"><b>${esc((S.storyteller&&S.storyteller.name)||"Storyteller")}</b> ${esc(e.text)}</div>`;
         return `<div class="s-town">${esc(e.text)}</div>`;
       }).join("");
       if (pinned) el.scrollTop = el.scrollHeight;
@@ -722,7 +786,7 @@ async function doSetup(){
   const players = ui.setupRows.filter(r=>r.on && r.role).map(r=>({name:r.name, model:r.model, role:r.role, alignment:alignmentOf(r.role), persona:r.persona}));
   if (!players.length && !ui.humanNames.slice(0,ui.humanCount).some(n=>n.trim())) return;
   const humans = ui.humanNames.slice(0,ui.humanCount).map((n,i)=>({name:n, mic:i+1}));
-  await api("/api/setup",{players, humans, seats:finalSeats()});
+  await api("/api/setup",{players, humans, seats:finalSeats(), storyteller:ui.stName});
   ui.priv={}; ui.sheetDirty={}; ui.buffer=""; ui.cotOpen={};
   S = await api("/api/state"); nav("home");
 }

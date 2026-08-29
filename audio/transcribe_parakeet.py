@@ -43,8 +43,11 @@ So the two questions are kept apart:
     (--dedupe-hold).
 
 Each surviving line is POSTed to <server>/api/hear as
-{"mic": <1-based channel>, "text": "..."}. Levels go to <server>/api/miclevels
-once a second, in the same shape transcribe.py sends.
+{"mic": <1-based channel>, "text": "...", "source": "table"}. Levels go to
+<server>/api/miclevels once a second, in the same shape transcribe.py sends.
+With --source storyteller the daemon listens on a private device (airpods, a
+headset) and the server files every line under the Storyteller instead of the
+mic roster.
 
 Examples:
     venv/bin/python transcribe_parakeet.py --list
@@ -699,7 +702,7 @@ class Daemon:
         self.stats["posted"] += 1
 
     def _post(self, mic, text):
-        payload = {"mic": mic, "text": text}
+        payload = {"mic": mic, "text": text, "source": self.args.source}
         if self.args.dry_run or requests is None:
             print(f"  [dry-run] would POST {self.args.server}/api/hear  {payload}")
             return
@@ -758,6 +761,7 @@ class Daemon:
                             for v in self.vads
                         ],
                         "vad": [round(float(p), 3) for p in self.vad_probs],
+                        "source": self.args.source,
                     },
                     timeout=1,
                 )
@@ -883,6 +887,9 @@ def main():
                     help="channel count (clamped to device max). Default: every input "
                          f"the device reports, capped at {MAX_AUTO_CHANNELS}")
     ap.add_argument("--server", default="http://localhost:4141", help="game server base URL")
+    ap.add_argument("--source", default="table",
+                    help="who this daemon listens to: 'table' (the mic roster) or "
+                         "'storyteller' (a private device, e.g. airpods)")
     ap.add_argument("--model", default=os.environ.get("CT_PARAKEET_MODEL", DEFAULT_MODEL),
                     help="parakeet MLX repo (default: %(default)s)")
     ap.add_argument("--vad-threshold", type=float, default=0.5,
