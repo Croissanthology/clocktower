@@ -58,6 +58,7 @@ async function poll(){
     document.getElementById("chars").innerHTML=S.chars.map((c,i)=>`<div class="card" style="--c:${COLORS[i%4]}">
       <div class="nm">${esc(c.name)}<span class="dot ${c.status==="thinking"?"thinking":""}"></span></div>
       <div class="word">holds <b>${esc(c.word)}</b> · speaker ${c.channel} · ${c.given?"GIVEN":"kept"}</div>
+      <div class="word" style="margin-top:3px">${esc(c.science||"")}</div>
       <div class="st">${esc(c.lastStatus)}</div></div>`).join("");
     if(S.ctx.length!==feedLen){
       feedLen=S.ctx.length;
