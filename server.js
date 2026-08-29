@@ -308,7 +308,7 @@ function callModel(p, msg, cb, effort = EFFORT, maxTokens = 8000) { // cb(err, r
 }
 
 function pushToPlayer(p, push, attempt = 1) {
-  p.status = 'thinking';
+  p.status = 'thinking'; p.thinkingSince = Date.now();
   p.parseError = null;
   save();
   const msg = buildUserMessage(p, push);
@@ -664,6 +664,10 @@ const STALE_LINE = +process.env.CT_STALE || 90;          // s: undirected queued
 setInterval(() => {
   const now = Date.now();
   const a = state.auto || {};
+  // a call that never returns must not freeze a player out of the game: 3 min of "thinking" → back to idle
+  for (const p of state.players) if (p.status === 'thinking' && now - (p.thinkingSince || 0) > 180000) {
+    p.status = 'idle'; p.parseError = null; log(p.name, { watchdog: 'thinking >3min, reset' }); save();
+  }
   // stranded-whisper watchdog: a human line flagged as sent, unanswered for 90 s, with its AI idle → send it again
   for (const w of state.whispers) {
     if (w.from !== 'human' || !w.pushed || now - w.ts < 90000) continue;
