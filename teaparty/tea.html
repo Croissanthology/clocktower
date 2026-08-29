@@ -1,0 +1,76 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>the unbirthday tea</title>
+<style>
+  body { --bg:#f6efe2; --panel:#fffaf0; --line:#dcc9a8; --ink:#3a2e2a; --dim:#96806b;
+    --rose:#c2547c; --teal:#2e8b8b; --plum:#7b5ea7; --gold:#b8860b;
+    margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 "Iowan Old Style",Palatino,Georgia,serif;
+    height:100vh; overflow:hidden; display:flex; flex-direction:column; }
+  .top { display:flex; align-items:center; gap:12px; padding:12px 18px; border-bottom:2px solid var(--line); }
+  .top h1 { margin:0; font-size:22px; font-style:italic; font-weight:600; }
+  .top .pw { color:var(--dim); font-size:13px; letter-spacing:.12em; }
+  button { font:inherit; font-size:14px; background:var(--panel); color:var(--ink); border:1.5px solid var(--line); border-radius:10px; padding:6px 14px; cursor:pointer; }
+  button.on { background:var(--ink); color:var(--bg); }
+  button.win { border-color:var(--gold); color:var(--gold); }
+  .main { flex:1; display:grid; grid-template-columns:340px 1fr; gap:14px; padding:14px; min-height:0; }
+  .chars { display:flex; flex-direction:column; gap:10px; overflow-y:auto; }
+  .card { border:2px solid var(--c); border-radius:14px; background:var(--panel); padding:10px 14px; }
+  .card .nm { font-size:19px; font-style:italic; font-weight:600; color:var(--c); display:flex; align-items:center; gap:8px; }
+  .card .dot { width:9px; height:9px; border-radius:50%; background:var(--line); margin-left:auto; }
+  .card .dot.thinking { background:var(--c); }
+  .card .st { color:var(--dim); font-size:13px; min-height:17px; }
+  .card .word { font-size:12px; letter-spacing:.1em; color:var(--dim); }
+  .card .word b { color:var(--c); }
+  .feed { border:2px solid var(--line); border-radius:14px; background:var(--panel); padding:14px 18px; overflow-y:auto; }
+  .feed .heard { color:var(--dim); }
+  .feed .say b { font-style:italic; }
+  .feed .phase { color:var(--gold); font-weight:700; letter-spacing:.1em; margin:10px 0; }
+  .bar { display:flex; gap:10px; padding:0 14px 14px; }
+  .bar input { flex:1; font:inherit; border:2px solid var(--line); border-radius:10px; padding:8px 12px; background:var(--panel); color:var(--ink); }
+  .won { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(246,239,226,.92); z-index:9; }
+  .won div { font-size:44px; font-style:italic; color:var(--gold); text-align:center; }
+</style>
+<body>
+<div class="top"><h1>the unbirthday tea</h1><span class="pw" id="pw"></span><span style="flex:1"></span>
+  <button id="startb" onclick="api('/api/start',{}).then(poll)">start fresh</button>
+  <button id="pauseb" onclick="api('/api/pause',{}).then(poll)">pause</button>
+  <button class="win" onclick="if(this.dataset.arm){api('/api/win',{}).then(poll);this.dataset.arm=''}else{this.dataset.arm='1';this.textContent='really open?';setTimeout(()=>{this.dataset.arm='';this.textContent='open the door'},3000)}">open the door</button></div>
+<div class="main">
+  <div class="chars" id="chars"></div>
+  <div class="feed" id="feed"></div>
+</div>
+<div class="bar"><input id="note" placeholder="whisper to the room as the storyteller (guests 'said' this)…"
+  onkeydown="if(event.key==='Enter'){api('/api/note',{text:this.value});this.value=''}"></div>
+<div class="won" id="won" style="display:none"><div>the door is open<br><span style="font-size:18px;color:var(--dim)">through the crawlspace, one by one</span></div></div>
+<script>
+const COLORS=["#c2547c","#2e8b8b","#7b5ea7","#b8860b"];
+function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+async function api(p,d){const r=await fetch(p,{method:d?"POST":"GET",headers:{"Content-Type":"application/json"},body:d?JSON.stringify(d):undefined});return r.json();}
+let S=null, feedLen=-1;
+async function poll(){
+  try{
+    S=await api("/api/state");
+    document.getElementById("pw").textContent="password: "+(S.cfg.password||[]).join(" ");
+    document.getElementById("pauseb").className=S.paused?"on":"";
+    document.getElementById("pauseb").textContent=S.paused?"PAUSED — resume":"pause";
+    document.getElementById("startb").className=S.running?"":"on";
+    document.getElementById("won").style.display=S.won?"flex":"none";
+    document.getElementById("chars").innerHTML=S.chars.map((c,i)=>`<div class="card" style="--c:${COLORS[i%4]}">
+      <div class="nm">${esc(c.name)}<span class="dot ${c.status==="thinking"?"thinking":""}"></span></div>
+      <div class="word">holds <b>${esc(c.word)}</b> · speaker ${c.channel} · ${c.given?"GIVEN":"kept"}</div>
+      <div class="st">${esc(c.lastStatus)}</div></div>`).join("");
+    if(S.ctx.length!==feedLen){
+      feedLen=S.ctx.length;
+      const f=document.getElementById("feed");
+      f.innerHTML=S.ctx.slice(-200).map(e=>{
+        if(e.kind==="heard")return `<div class="heard">${esc(e.text)}</div>`;
+        if(e.kind==="say"){const i=S.chars.findIndex(c=>c.name===e.player);return `<div class="say"><b style="color:${COLORS[i%4]}">${esc(e.player)}:</b> ${esc(e.text)}</div>`;}
+        return `<div class="phase">${esc(e.text)}</div>`;
+      }).join("");
+      f.scrollTop=f.scrollHeight;
+    }
+  }catch(e){}
+  setTimeout(poll,1200);
+}
+poll();
+</script>
