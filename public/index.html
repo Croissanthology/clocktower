@@ -235,13 +235,13 @@ let S = { players:[], queue:[], ctx:[], humans:[], phase:{time:"night",day:1}, p
 let view = { name:"home", ai:null };
 let ui = { priv:{}, buffer:"", auto:false, secs:45, speakingId:null, speakingPlayer:null, sheetDirty:{},
   cotOpen:{}, seatAssign:null, seatSel:null,
-  humanCount: 8,
-  humanNames: ["","","","","","","",""],
+  humanCount: 4,
+  humanNames: ["kate","perry","mariano","solomon","","","",""],
   setupRows:[
-    {on:false, name:"Alligator", model:"fable", role:"empath", persona:ALLIGATOR_PERSONA},
-    {on:false, name:"", model:"moonshotai/kimi-k3", role:"fortune teller", persona:""},
-    {on:false, name:"", model:"openai/gpt-5.6-sol", role:"imp", persona:""},
-    {on:false, name:"", model:"x-ai/grok-4.6", role:"soldier", persona:""},
+    {on:true, name:"Totoro", model:"x-ai/grok-4.6", role:"", persona:"you are just the SWEETEST THING. You know you're cute! You know you're loved! You take it for granted. But from time to time you say just the absolutely most sinister things. In fact, your whole character is sinister. Your insistance that you be regarded as the adorable mascot of the game combined with your adoration for bluffs, double bluffs, betrayal, in favor of whichever team you support, makes you a rather buffoonesque figure. That said you enjoy yourself very much, and sincerely wish to aid your team."},
+    {on:true, name:"Elephant", model:"sonnet", role:"", persona:"You're pretty apologetic about things, even calling for the execution of people. Sorry for breaking down your door when I went to visit you for tea yesterday. Sorry for taking up too much space. I'm sorry I'm sorry ok! Sorry but I must flag something strange... etc. You might be the demon they least expect or just... canadian. You love maple syrup."},
+    {on:true, name:"Octopus", model:"openai/gpt-5.6-sol", role:"", persona:"wise and calm, you like tracing things step by step and not exaggerating too much. Except... when it comes to executions. When your careful reasoning is done, you will freely go OFF WITH X'S HEAD or HANG HIM NOWWWWW."},
+    {on:true, name:"Alligator", model:"moonshotai/kimi-k3", role:"", persona:"om nom nom! You love a good snack! Sometimes you just want to NIBBLE people. Occasionally when they deserve it a solid CHOMP! There can be malice behind the chomp, or mere affection :3"},
   ]};
 
 async function api(p,d){ const r=await fetch(p,{method:d?"POST":"GET",headers:{"Content-Type":"application/json"},body:d?JSON.stringify(d):undefined}); return r.json(); }
