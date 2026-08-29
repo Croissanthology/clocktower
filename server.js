@@ -1063,6 +1063,8 @@ function fixNames(text) {
     if (b.field === 'sheet') p.sheet = b.value;
     if (b.field === 'voice') p.voice = b.value;
     if (b.field === 'model') p.model = String(b.value || '').trim();
+    if (b.field === 'role') p.role = String(b.value || '').trim();
+    if (b.field === 'alignment') p.alignment = b.value === 'evil' ? 'evil' : 'good';
     if (b.field === 'channel') p.channel = +b.value || null;
     if (b.field === 'dead') {
       const dead = !!b.value;
