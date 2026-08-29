@@ -638,6 +638,7 @@ function update(){
       ${[30,45,60,90].map(x=>`<option ${x===(S.auto||{}).secs?"selected":""}>${x}</option>`).join("")}</select>`:""}
     <button class="${(S.auto||{}).speak?"on":""}" onclick="api('/api/auto',{speak:!(S.auto||{}).speak}).then(poll0)" title="play queued lines when the room is quiet">auto-speak</button>
     <button class="ghost" onclick="nav('whispers')">whispers${(S.whispers||[]).length?` ${(S.whispers||[]).length}`:""}</button>
+    <button class="ghost" onclick="endGame(this)" id="endgame-btn">${ui.endArm?"really end the game?":"end game"}</button>
     <button class="ghost" onclick="nav('setup')">setup</button>`;
   // only touch the DOM when the bar actually changed — a rebuild every poll swallows taps that land mid-replace
   if (topHtml !== ui.topHtml) { ui.topHtml = topHtml; document.getElementById("top").innerHTML = topHtml; }
@@ -796,6 +797,13 @@ function evChoose(n){
   evSend({type:evPick.type, who:n});
 }
 async function evSend(ev){ evPick=null; renderEvents(); await api("/api/event", ev); poll0(); }
+async function endGame(){
+  if (!ui.endArm) { ui.endArm = true; update(); setTimeout(()=>{ ui.endArm=false; try{update()}catch(e){} }, 4000); return; }
+  ui.endArm = false;
+  const r = await api("/api/endgame", {});
+  alert("Game exported to " + (r.exported||"?") + " — goodnights are on their way to the speakers.");
+  poll0();
+}
 async function cycleAuto(){
   const cur=(S.auto||{}).tick||"off"; const next={off:"timer",timer:"lull",lull:"off"}[cur];
   await api("/api/auto",{tick:next}); poll0();

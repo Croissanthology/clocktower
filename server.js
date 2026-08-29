@@ -986,6 +986,43 @@ function fixNames(text) {
     if (i >= 0) { const job = playJobs.splice(i, 1)[0]; clearTimeout(job.timer); job.done(); }
     return send(200, { ok: true });
   }
+  // the end of the game: every AI says goodnight in its own voice, then the whole game is exported to the desktop
+  if (req.method === 'POST' && url.pathname === '/api/endgame') {
+    // 1. export first (so even a crash mid-goodnight loses nothing)
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+    const dest = path.join(process.env.HOME, 'Desktop', `clocktower-game-${stamp}`);
+    fs.mkdirSync(dest, { recursive: true });
+    let copied = 0;
+    for (const f of fs.readdirSync(GAME)) {
+      if (/^speech-.*\.(wav|aiff)$/.test(f)) continue;
+      const src = path.join(GAME, f);
+      if (fs.statSync(src).isDirectory()) { fs.cpSync(src, path.join(dest, f), { recursive: true }); copied++; continue; }
+      fs.copyFileSync(src, path.join(dest, f)); copied++;
+    }
+    // human-readable exports
+    const lines = state.ctx.map(e => {
+      const t = new Date(e.ts).toTimeString().slice(0, 8);
+      if (e.kind === 'say') return `[${t}] ${e.player} (AI)${e.to && e.to !== 'town' ? ' to ' + e.to : ''}: ${e.text}`;
+      if (e.kind === 'note') return `[${t}] MARGOT: ${e.text}`;
+      if (e.kind === 'phase') return `[${t}] === ${e.text} ===`;
+      return `[${t}] ${e.text}`;
+    });
+    fs.writeFileSync(path.join(dest, 'transcript.md'), `# the table\n\n${lines.join('\n')}\n`);
+    const pairs = [...new Set(state.whispers.map(w => w.human + '\u0000' + w.ai))].map(k => k.split('\u0000'));
+    fs.writeFileSync(path.join(dest, 'whispers.md'), '# whispers\n\n' + pairs.map(([h, a]) =>
+      `## ${h} ↔ ${a}\n\n` + state.whispers.filter(w => w.human === h && w.ai === a)
+        .map(w => `- **${w.from === 'ai' ? a : h}** (${new Date(w.ts).toTimeString().slice(0, 8)}): ${w.text}`).join('\n')).join('\n\n') + '\n');
+    for (const p of state.players)
+      fs.writeFileSync(path.join(dest, `sheet-${p.name.replace(/[^\w-]/g, '_')}.md`), `# ${p.name} — ${p.role} (${p.alignment})${p.dead ? ' — died' : ''}\n\n${p.sheet}\n`);
+    // 2. goodnights: every AI, dead or alive, one line each; auto-speak carries them out
+    state.auto.speak = true;
+    const targets = state.players.filter(p => p.status !== 'thinking');
+    const priv = {};
+    for (const p of state.players) priv[p.name] = `THE GAME IS OVER — thank you for playing. Say goodnight to the table: ONE short, warm, personalized goodnight in your own voice and character (reference the night if you like — your wins, your lies, your grudges, all forgivable now). Put it in say. No action, no whisper, no strategy. This is the last thing you will ever say to them tonight.`;
+    doPushTargets(targets, priv, true);
+    save();
+    return send(200, { ok: true, exported: dest, copied, pushed: targets.map(p => p.name) });
+  }
   if (req.method === 'POST' && url.pathname === '/api/auto') {
     const b = await body(req);
     if (['off', 'timer', 'lull'].includes(b.tick)) state.auto.tick = b.tick;
