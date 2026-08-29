@@ -553,7 +553,13 @@ function voiceFor(idx, p) {
   catch (e) { return ''; }
 }
 // synthesize text to a file (kokoro/piper/say via synth.sh, macOS say as fallback). cb(err, file)
+const MAC_VOICES = new Set(['Daniel','Karen','Samantha','Fred','Moira','Rishi','Tessa','Grandpa','Grandma','Albert','Kathy','Ralph','Junior']);
 function synthToFile(voice, text, outfile, cb) {
+  // a macOS voice name = use `say` directly and always: instant, and the same voice every time
+  if (MAC_VOICES.has(voice)) {
+    const aiff = outfile.replace(/\.wav$/, '.aiff');
+    return execFile('say', ['-v', voice, '-o', aiff, text], { timeout: 60000 }, (err) => cb(err, aiff));
+  }
   const sayTo = (useVoice) => {
     const aiff = outfile.replace(/\.wav$/, '.aiff');
     const args = useVoice ? ['-v', useVoice, '-o', aiff, text] : ['-o', aiff, text];
@@ -640,8 +646,10 @@ function speakQueued(id) {
   else {
     // not synthesized yet: don't make the table wait 15 s for kokoro — the mac's own voice, now
     const macVoices = ['Daniel', 'Samantha', 'Fred', 'Moira', 'Rishi', 'Karen'];
+    const own = voiceFor(idx, pl);
+    const fb = MAC_VOICES.has(own) ? own : macVoices[idx % macVoices.length];   // never change a character's voice mid-game
     const aiff = path.join(GAME, `speech-${q.id}-say.aiff`);
-    execFile('say', ['-v', macVoices[idx % macVoices.length], '-o', aiff, q.text], { timeout: 20000 }, (err) => {
+    execFile('say', ['-v', fb, '-o', aiff, q.text], { timeout: 20000 }, (err) => {
       if (err) { state.speaking = null; save(); return; }
       log(q.player, { fallbackVoice: 'say', id: q.id });
       startPlayback(aiff);
