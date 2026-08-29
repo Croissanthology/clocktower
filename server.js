@@ -1036,9 +1036,8 @@ function fixNames(text) {
     if (b.town) ctxAppend({ kind: 'town', text: b.town });
     if (b.note) ctxAppend({ kind: 'note', text: b.note });
     for (const g of Array.isArray(b.game) ? b.game : []) {
+      // typed lines are official but NEVER auto-kill (a "vote yes/no executed?" once flagged a living AI dead) — deaths go through the buttons
       ctxAppend({ kind: 'phase', text: `MARGOT: ${g}` });
-      if (/\b(executed|died|dies|is dead|killed)\b/i.test(g))
-        for (const p of state.players) if (!p.dead && new RegExp(`\\b${p.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(g)) { p.dead = true; p.ghostVote = true; p.action = null; }
     }
     const targets = (b.targets || []).map(player).filter(Boolean).filter(p => p.status !== 'thinking');
     const priv = typeof b.private === 'string'
