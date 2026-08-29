@@ -231,6 +231,14 @@ const ROLES = {
 const COLORS = ["#8aa46a","#c9973f","#c8656e","#7d8fb3"];
 function alignmentOf(r){ return (ROLES.minion.includes(r)||ROLES.demon.includes(r))?"evil":"good"; }
 function esc(s){ return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+// write innerHTML only when it actually changed — a rebuild on every poll flickers,
+// loses focus, and swallows taps that land mid-replace. __html rides on the element,
+// so a nav() that builds a fresh node starts clean.
+function setHtml(id, html){
+  const el = typeof id==="string" ? document.getElementById(id) : id;
+  if (!el || el.__html===html) return;
+  el.__html = html; el.innerHTML = html;
+}
 function colorOf(name){ const i=S.players.findIndex(p=>p.name===name); return COLORS[i>=0?i%4:0]; }
 
 let S = { players:[], queue:[], ctx:[], humans:[], phase:{time:"night",day:1}, phaseLabel:"night 1", turnN:0, model:"sonnet", speaking:null };
@@ -254,7 +262,10 @@ async function poll(){
     if (S.speaking){ ui.speakingId=S.speaking.id; ui.speakingPlayer=S.speaking.player; }
     else if (ui.speakingId!=null && !speechSynthesis.speaking){ ui.speakingId=null; ui.speakingPlayer=null; }
     document.body.classList.toggle("day", S.phase.time==="day");
-    if (!S.players.length && view.name!=="setup") nav("setup");
+    // only a game that just vanished (reset from another screen) forces setup —
+    // a redirect on every poll used to yank you back out of any page you opened
+    if (!S.players.length && ui.hadGame && view.name!=="setup") nav("setup");
+    ui.hadGame = S.players.length > 0;
     update();
   } catch(e){}
   setTimeout(poll, 1200);
@@ -509,16 +520,33 @@ function applyPersonality(i, name){
 
 // ---------- mic monitoring ----------
 function micFresh(){ return S.mics && S.mics.running && (Date.now()-S.mics.ts < 4000); }
-function micWidget(){
+function micLevels(){
   const on = micFresh();
-  const lv = on ? S.mics.levels : [0,0,0];
-  const bars = (lv.length?lv:[0,0,0]).slice(0,8).map(l=>
-    `<div class="bar" style="height:${Math.max(2,Math.min(20,Math.round(Math.sqrt(l)*55)))}px"></div>`).join("");
-  const stOn = stFresh();
-  const stDot = (S.storyteller && S.storyteller.enabled)
-    ? `<span class="mdot" style="background:${stOn?"var(--good)":"var(--bad)"};margin-left:6px" title="${esc((S.storyteller&&S.storyteller.name)||"storyteller")}'s mic: ${stOn?"live":"offline"}"></span>`
-    : "";
-  return `<div class="micw ${on?"":"off"}" onclick="nav('mics')" title="mics">${bars}${stDot}</div>`;
+  const lv = on && S.mics.levels && S.mics.levels.length ? S.mics.levels : [0,0,0];
+  return { on, lv: lv.slice(0,8) };
+}
+function barPx(l){ return Math.max(2,Math.min(20,Math.round(Math.sqrt(l)*55))) + "px"; }
+// the widget itself never changes — live levels would otherwise rewrite the whole top bar every poll
+function micWidget(){ return `<div class="micw" id="micw" onclick="nav('mics')" title="mics"><span class="mdot" id="stdot" style="display:none"></span></div>`; }
+function renderMicBars(){
+  const el = document.getElementById("micw"); if(!el) return;
+  const { on, lv } = micLevels();
+  el.classList.toggle("off", !on);
+  const stDot = document.getElementById("stdot");
+  const bars = Array.from(el.children).filter(c=>c!==stDot);
+  while (bars.length > lv.length) el.removeChild(bars.pop());
+  while (bars.length < lv.length) { const b=document.createElement("div"); b.className="bar"; el.insertBefore(b, stDot); bars.push(b); }
+  lv.forEach((l,i)=>{ bars[i].style.height = barPx(l); });
+  if (stDot){
+    const show = !!(S.storyteller && S.storyteller.enabled);
+    stDot.style.display = show ? "" : "none";
+    if (show){
+      const stOn = stFresh();
+      stDot.style.background = stOn ? "var(--good)" : "var(--bad)";
+      stDot.style.marginLeft = "6px";
+      stDot.title = `${(S.storyteller&&S.storyteller.name)||"storyteller"}'s mic: ${stOn?"live":"offline"}`;
+    }
+  }
 }
 async function loadInputs(){
   const r = await api("/api/inputs");
@@ -598,7 +626,9 @@ function renderMics(){
       <span style="color:var(--dim);font-size:12px;width:90px">${!on?"offline":(ago!=null&&ago<3?"speech":"open, quiet")}</span>
     </div>`;
   }).join("");
-  el.innerHTML = `
+  // the shell holds the device <select> and the channel <input> — rewriting it every poll
+  // dropped what you typed; only the level rows below carry live values
+  setHtml(el, `
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px">
       <select style="flex:1" onchange="ui.micDevice=this.value; const d=(ui.inputs||[]).find(x=>x.name===this.value); if(d) ui.micChannels=Math.min(8,d.in); renderMics()">${opts||"<option>no input devices found</option>"}</select>
       <input type="number" min="1" max="8" value="${n}" style="width:70px" onchange="ui.micChannels=+this.value">
@@ -626,7 +656,8 @@ function renderMics(){
       <input type="number" min="1" max="12" value="${p.channel||i+1}" style="width:60px" onchange="api('/api/edit',{name:${JSON.stringify(p.name)},channel:+this.value})">
       <button onclick="api('/api/speak/test',{player:${JSON.stringify(p.name)}})">test</button>
     </div>`).join("")}</div>
-    <div class="hint" style="margin-top:10px">green = speech in the last 3s · gray = open but quiet · red = transcriber not running. lines land in CONTEXT attributed by mic number → name.</div>`;
+    <div class="hint" style="margin-top:10px">green = speech in the last 3s · gray = open but quiet · red = transcriber not running. lines land in CONTEXT attributed by mic number → name.</div>`);
+  setHtml("mic-rows", rows);
 }
 
 // ---------- transcript feed ----------
@@ -716,11 +747,11 @@ function update(){
     <button class="ghost" onclick="nav('whispers')">whispers${(S.whispers||[]).length?` ${(S.whispers||[]).length}`:""}</button>
     <button class="ghost" onclick="endGame(this)" id="endgame-btn">${ui.endArm?"really end the game?":"end game"}</button>
     <button class="ghost" onclick="nav('setup')">setup</button>`;
-  // only touch the DOM when the bar actually changed — a rebuild every poll swallows taps that land mid-replace
-  if (topHtml !== ui.topHtml) { ui.topHtml = topHtml; document.getElementById("top").innerHTML = topHtml; }
+  setHtml("top", topHtml);
+  renderMicBars();
 
   if (view.name==="home") {
-    document.getElementById("boxes").innerHTML = S.players.map((p,i)=>{
+    setHtml("boxes", S.players.map((p,i)=>{
       const says = S.queue.filter(q=>q.player===p.name);
       return `<div class="box ${ui.speakingPlayer===p.name?"glow":""} ${p.dead?"dead":""}" style="--c:${COLORS[i]}" onclick="nav('ai','${esc(p.name)}')">
         <div class="hd"><span class="nm">${esc(p.name)}</span><span class="rl">${esc(p.role)}</span><span class="mdl">${esc(p.model||S.model)}</span>
@@ -737,7 +768,7 @@ function update(){
           <button onclick="speak(${q.id})">${ui.speakingId===q.id?"stop":"speak"}</button>
           <button class="ghost" onclick="dequeue(${q.id},true)">&times;</button></div>`).join("")}
       </div>`;
-    }).join("");
+    }).join(""));
   }
 
   if (view.name==="ai") {
@@ -745,7 +776,7 @@ function update(){
     document.getElementById("ai-dot").className = "dot "+(p.parseError?"error":p.status==="thinking"?"thinking":"");
     document.getElementById("ai-status").textContent = p.lastStatus||"";
     const says = S.queue.filter(q=>q.player===p.name);
-    document.getElementById("ai-extra").innerHTML =
+    setHtml("ai-extra",
       (p.parseError?`<div class="err">${esc(p.parseError)}</div>`:"") +
       (p.ask?`<div class="askline" style="margin:4px 0"><b>?</b>
         <span style="flex:1">${esc(p.ask.text)}</span><button onclick="askSeen('${esc(p.name)}')">ok</button></div>`:"") +
@@ -753,7 +784,7 @@ function update(){
       says.map(q=>`<div class="sayline" style="margin:4px 0">
         <span class="txt">${q.to!=="town"?`<b>&rsaquo; ${esc(q.to)}</b> `:""}${esc(q.text)}</span>
         <button onclick="speak(${q.id})">${ui.speakingId===q.id?"stop":"speak"}</button>
-        <button class="ghost" onclick="dequeue(${q.id},true)">&times;</button></div>`).join("");
+        <button class="ghost" onclick="dequeue(${q.id},true)">&times;</button></div>`).join(""));
     const sheet = document.getElementById("ai-sheet");
     if (document.activeElement!==sheet && ui.sheetDirty[p.name]==null && sheet.value!==p.sheet) sheet.value = p.sheet;
     renderFeed();
