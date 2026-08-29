@@ -6,3 +6,4 @@ voices/venv/
 voices/models/
 __pycache__/
 .DS_Store
+teaparty/run/
