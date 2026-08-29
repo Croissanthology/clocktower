@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // clocktower model wrangler — node server for up to 4 AI players.
-// AI turns run on your claude subscription (headless `claude -p`) via the Pi
-// agent core in pi-core.js — no API tokens.
+// AI turns run on your claude subscription via OAuth (pi-auth.js) through the Pi
+// agent core in pi-core.js — no CLI, no API tokens.
 import http from 'node:http';
 import https from 'node:https';
 import fs from 'node:fs';
@@ -16,6 +16,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = __dirname;
 const GAME = path.join(ROOT, 'game');
 const STATE_FILE = path.join(GAME, 'state.json');
+const AUTH_FILE = path.join(GAME, 'auth.json');            // Anthropic OAuth token (from `node login.js`)
+const OPENROUTER_KEY_FILE = path.join(ROOT, 'openrouter.key');
 const RULES_FILE = path.join(ROOT, 'rules', 'trouble-brewing.md');
 const TEMPLATE_FILE = path.join(ROOT, 'prompts', 'system-template.md');
 const PORT = process.env.PORT || 4141;
@@ -125,22 +127,6 @@ function extractRoleRules(role) {
   } catch (e) { return ''; }
 }
 
-// extract the first balanced {...} from model output, string-aware
-function extractJson(text) {
-  const start = text.indexOf('{');
-  if (start < 0) throw new Error('no JSON object in output');
-  let depth = 0, inStr = false, esc = false;
-  for (let i = start; i < text.length; i++) {
-    const c = text[i];
-    if (esc) { esc = false; continue; }
-    if (inStr) { if (c === '\\') esc = true; else if (c === '"') inStr = false; continue; }
-    if (c === '"') inStr = true;
-    else if (c === '{') depth++;
-    else if (c === '}') { depth--; if (depth === 0) return JSON.parse(text.slice(start, i + 1)); }
-  }
-  throw new Error('unbalanced JSON in output');
-}
-
 function applyEdits(p, edits) {
   const applied = [], failed = [];
   for (const e of Array.isArray(edits) ? edits : []) {
@@ -232,40 +218,30 @@ function buildUserMessage(p, push) {
   if (push.recent) parts.push(`=== recent table talk, for orientation (you have seen this before) ===\n${push.recent}`);
   if (push.ctxText) parts.push(`=== heard since your last turn (live mics + AI speakers; may contain transcription errors) ===\n${push.ctxText}`);
   if (push.digest) parts.push(`=== your private whisper threads so far (only you and each whisperer know these) ===\n${push.digest}`);
-  if (push.whisper) parts.push(`=== WHISPER — ${push.whisper.map(w => w.human).join(', ')} came to you privately. Nobody else hears this. ===\n${push.whisper.map(w => `${w.human} [whispering]: ${w.text}`).join('\n')}\n\nReply in the \`whisper\` field ({"to": "<name>", "text": "..."}, one per whisperer). Your whispered reply reaches ONLY them, as text on their screen — it is never spoken aloud. Keep \`say\` empty this tick unless the table genuinely needs something from you right now. Write anything you want to remember from this exchange into the PRIVATE section of your sheet.`);
+  if (push.whisper) parts.push(`=== WHISPER — ${push.whisper.map(w => w.human).join(', ')} came to you privately. Nobody else hears this. ===\n${push.whisper.map(w => `${w.human} [whispering]: ${w.text}`).join('\n')}\n\nReply with the \`whisper\` tool ({"to": "<name>", "text": "..."}, one call per whisperer). Your whispered reply reaches ONLY them, as text on their screen — it is never spoken aloud. Do not call \`say\` this tick unless the table genuinely needs something from you right now. Write anything you want to remember from this exchange into the PRIVATE section of your sheet.`);
   if (push.priv) parts.push(`=== MARGOT, PRIVATELY — only you receive this ===\n${push.priv}`);
-  parts.push(`=== before you answer: does anything above change your STRATEGY block? if yes, edit it this tick. then respond with the JSON contract only ===`);
+  parts.push(`=== before you answer: does anything above change your STRATEGY block? if yes, edit it this tick (edit_sheet). then act by CALLING YOUR TOOLS — set_status always; say/set_action/ask_storyteller/whisper as needed ===`);
   return parts.join('\n\n');
 }
 
-// --- openrouter backend: any model id containing "/" is routed there ---
-function openrouterKey() {
-  if (process.env.OPENROUTER_API_KEY) return process.env.OPENROUTER_API_KEY;
-  try { return fs.readFileSync(path.join(ROOT, 'openrouter.key'), 'utf8').trim(); } catch (e) { return ''; }
-}
-
 // --- the agent core lives in pi-core.js, on @earendil-works/pi-agent-core ---
-// The Pi Agent runs each player turn; its StreamFn (wrapping the claude CLI /
-// openrouter backends) is contracted never to throw — every failure, timeout,
-// or abort comes back as a clean result object.
-function callModel(p, msg, cb, effort = EFFORT, maxTokens = 8000) { // cb(err, raw, stderr, thinking)
-  let model = p.model || MODEL;
-  // "or:" prefix forces the openrouter path (visible chain of thought, billed to the key) —
-  // otherwise anthropic models always ride the claude subscription, never the openrouter key
-  const forceOR = model.startsWith('or:');
-  if (forceOR) model = model.slice(3);
-  else if (model.startsWith('anthropic/')) model = model.split('/')[1].replace(/:.*$/, '');
+// The Pi Agent runs each player turn against the Claude subscription (OAuth) and
+// the model acts by calling native tools. runPlayerTurn is contracted never to
+// throw — every failure, timeout, or abort comes back as a clean result whose
+// `collected` holds the tool intents (say / action / edits / ask / whisper /
+// status), which the callers below apply. cb(err, out, thinking); `out` is the
+// collected object (or null on a hard failure).
+function callModel(p, msg, cb, effort = EFFORT, maxTokens = 8000, toolset = 'full') {
   const sysFile = sysPromptPath(p);
-  const backend = model.includes('/') ? 'openrouter' : 'claude-cli';
   let done = false;
-  const once = (err, text, stderr, thinking) => { if (done) return; done = true; cb(err, text, stderr, thinking); };
+  const once = (err, out, thinking) => { if (done) return; done = true; cb(err, out, thinking); };
   runPlayerTurn({
-    name: p.name, backend, model, sysFile, userMsg: msg,
-    effort, maxTokens, cwd: GAME, timeoutMs: TIMEOUT_MS,
-    openrouterKey: backend === 'openrouter' ? openrouterKey() : '',
+    name: p.name, model: p.model || MODEL, sysFile, userMsg: msg,
+    effort, maxTokens, toolset, timeoutMs: TIMEOUT_MS,
+    authFile: AUTH_FILE, openrouterKeyFile: OPENROUTER_KEY_FILE,
   })
-    .then(r => once(r.error ? new Error(r.error) : null, r.text || '', r.stderr || '', r.thinking || ''))
-    .catch(e => once(e, '', '', ''));
+    .then(r => once(r.error ? new Error(r.error) : null, r.collected, r.thinking || ''))
+    .catch(e => once(e, null, ''));
   return null;
 }
 
@@ -274,15 +250,15 @@ function pushToPlayer(p, push, attempt = 1) {
   p.parseError = null;
   save();
   const msg = buildUserMessage(p, push);
-  callModel(p, msg, (err, raw, stderr, thinking) => {
+  callModel(p, msg, (err, out, thinking) => {
       p.status = 'idle';
-      log(p.name, { push, raw, thinking: thinking || '', stderr: (stderr || '').slice(0, 2000), err: err ? String(err) : null });
-      if (err && !raw) {
+      log(p.name, { push, out, thinking: thinking || '', err: err ? String(err) : null });
+      if (err && !out) {
         if (attempt < 2) { setTimeout(() => pushToPlayer(p, push, attempt + 1), 2000); return; }
-        p.parseError = `claude call failed twice: ${String(err).slice(0, 300)}`; save(); return;
+        p.parseError = `model call failed twice: ${String(err).slice(0, 300)}`; save(); return;
       }
       try {
-        const out = extractJson(raw);
+        if (!out) throw new Error('no tool output — the model called no tools this tick');
         p.feedback = '';
         p.lastStatus = out.status || '';
         const res = applyEdits(p, out.edits);
@@ -327,9 +303,9 @@ function pushToPlayer(p, push, attempt = 1) {
           input: msg, thinking: thinking || '', ts: Date.now(),
         });
       } catch (e) {
-        p.parseError = `${e.message} — raw kept in log; re-push or edit by hand`;
-        p.lastStatus = raw.slice(0, 400);
-        p.history.push({ turn: push.turnN, phase: push.label, status: '(tick lost: bad JSON)', say: [], action: null, ask: '', edits: 0, editsFailed: 0, input: msg, thinking: thinking || '', ts: Date.now() });
+        p.parseError = `${e.message} — details in log; re-push or edit by hand`;
+        p.lastStatus = String(e.message || e).slice(0, 400);
+        p.history.push({ turn: push.turnN, phase: push.label, status: '(tick lost: no tool output)', say: [], action: null, ask: '', edits: 0, editsFailed: 0, input: msg, thinking: thinking || '', ts: Date.now() });
       }
       save();
       drainWhispers(p);
@@ -361,13 +337,12 @@ function quickWhisper(p, pend) {
     `=== the game so far ===\n${gameLog() || '(nothing yet)'}`,
     `=== your sheet ===\n${p.sheet}`,
     `=== the private thread(s), newest last ===\n${threads}`,
-    `Answer now, in character, as ${p.name}: 1–3 plain sentences per person, spoken-word style. You may lie, deflect, bargain, or ask them something back. Do NOT reveal your role unless your STRATEGY says to. Reply with ONLY this JSON: {"whisper": [{"to": "<name>", "text": "..."}], "note": "one line for your PRIVATE section recording what they told you and what you answered"}`,
+    `Answer now, in character, as ${p.name}: 1–3 plain sentences per person, spoken-word style. You may lie, deflect, bargain, or ask them something back. Do NOT reveal your role unless your STRATEGY says to. Call the \`whisper\` tool once per person, and the \`record_note\` tool with one line for your PRIVATE section recording what they told you and what you answered.`,
   ].join('\n\n');
-  callModel(p, msg, (err, raw, stderr, thinking) => {
+  callModel(p, msg, (err, out, thinking) => {
     p.whispering = false;
-    log(p.name, { quickWhisper: pend, raw, thinking: thinking || '', err: err ? String(err) : null });
-    let out = null; try { out = extractJson(raw); } catch (e) {}
-    if (!out) { // fall back to the full-tick path so nobody is left hanging
+    log(p.name, { quickWhisper: pend, out, thinking: thinking || '', err: err ? String(err) : null });
+    if (!out || (!out.whisper?.length && !String(out.note || '').trim())) { // nothing usable — fall back so nobody is left hanging
       for (const w of pend) w.pushed = false;
       save(); return fullWhisperTick(p);
     }
@@ -387,7 +362,7 @@ function quickWhisper(p, pend) {
     }
     save();
     drainWhispers(p); // anything that arrived meanwhile
-  }, 'low', 900);
+  }, 'low', 900, 'whisper');
 }
 function fullWhisperTick(p) {
   const pend = pendingWhispers(p);
@@ -1076,4 +1051,10 @@ function fixNames(text) {
 
 // after a restart, queued lines without audio go back into the synth line, oldest first
 setTimeout(() => { for (const q of state.queue) if (!q.file || !fs.existsSync(q.file)) preSynth(q); }, 500);
-server.listen(PORT, () => console.log(`clocktower wrangler on http://localhost:${PORT}  (model=${MODEL}, effort=${EFFORT})\n  phone/other laptops (wrangler, secret): ${wranglerUrl()}\n  side laptops (whisper, public):        http://${lanIp()}:${PORT}/whisper`));
+server.listen(PORT, () => {
+  console.log(`clocktower wrangler on http://localhost:${PORT}  (model=${MODEL}, effort=${EFFORT})\n  phone/other laptops (wrangler, secret): ${wranglerUrl()}\n  side laptops (whisper, public):        http://${lanIp()}:${PORT}/whisper`);
+  // AI turns need an Anthropic OAuth token (Claude subscription). Warn early if it's missing.
+  let authed = false;
+  try { authed = !!JSON.parse(fs.readFileSync(AUTH_FILE, 'utf8')).anthropic; } catch (e) {}
+  if (!authed) console.log(`\n  ⚠ no Claude subscription token yet — run \`node login.js\` once (unless you only use openrouter models)`);
+});

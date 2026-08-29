@@ -1,38 +1,47 @@
 # clocktower — LLM player harness for blood on the clocktower
 
 humans + up to 4 AI players + storyteller. Runs the AI players on your **claude
-subscription** (headless `claude -p`, no API tokens). One screen to wrangle from.
+subscription** via OAuth (no CLI, no API tokens). One screen to wrangle from.
 
 ## run
 
 ```
 npm install     # once — pulls @earendil-works/pi-agent-core + pi-ai
+node login.js   # once — OAuth into your Claude Pro/Max account (opens a browser)
 node server.js
 # → http://localhost:4141
 ```
 
-env knobs: `CT_MODEL` (default `sonnet`), `CT_EFFORT` (default `low`), `PORT` (default 4141).
+`node login.js` stores an Anthropic OAuth token in `game/auth.json` (gitignored,
+auto-refreshed); it's a fresh grant, independent of your Claude Code CLI login. Only
+needed for Anthropic models — openrouter models use `OPENROUTER_API_KEY` / `openrouter.key`.
 
-## the agent core (pi-core.js)
+env knobs: `CT_MODEL` (default `sonnet`), `CT_EFFORT` (default `medium`), `PORT` (default 4141).
+
+## the agent core (pi-core.js / pi-auth.js)
 
 Each AI turn runs through a [`@earendil-works/pi-agent-core`](https://github.com/earendil-works/pi/tree/main/packages/agent)
-`Agent`, in `pi-core.js`. The subscription model is unchanged: instead of a network
-provider, a custom **`StreamFn`** wraps the two backends the harness already uses —
-headless `claude -p` (rides the Claude subscription, no API tokens) and OpenRouter over
-HTTPS. Pi's StreamFn contract is *never throw; encode every failure as an error event* —
-so a CLI crash, a timeout, a malformed body, or an abort all arrive as one clean typed
-result on a single code path (surfaced via the Agent's `errorMessage`) instead of leaking
-as an unhandled rejection or a half-fired callback. The project is ES modules throughout
-(`"type": "module"`, no build step — `node server.js` runs it directly); `callModel(p, msg,
-cb, …)` keeps its exact old callback signature, so the rest of the server is untouched.
+`Agent`. Authentication is Anthropic **OAuth** against your Claude subscription
+(`pi-auth.js`: a serialized file-backed credential store + `Models` wired to the anthropic
+and openrouter providers) — pi-ai detects the `sk-ant-oat` token and talks to the API as
+Claude Code, so there's no `claude -p` subprocess and no per-token bill.
+
+The model acts by calling **decomposed native tools** — `say`, `set_action`, `edit_sheet`,
+`ask_storyteller`, `whisper`, `set_status` — each schema-validated (TypeBox) by the
+framework, so malformed arguments are caught and retried instead of dropping the whole tick.
+The tools don't mutate game state directly; each records its intent into a per-turn
+accumulator that the server applies with its existing side-effect logic (speech queue,
+night-hold, whisper routing, sheet edits, history, fate). A turn may span a few tool-calling
+round-trips and ends when the model stops calling tools (per-turn timeout is the backstop).
+The project is ES modules throughout (`"type": "module"`, no build step).
 
 ## the model
 
 Context is ONE shared stream: whisper transcript + delivered AI speech + your `!` notes +
 day/night markers. Each AI turn receives exactly four things: day/night, its role, everything
 in the shared stream since its last turn (per-AI cursor — nothing repeated), and whatever you
-typed privately for it. Its only memory is its **sheet**, maintained by find/replace diff
-edits (failures reported back to it). Output is strict JSON: say / action / ask / edits.
+typed privately for it. Its only memory is its **sheet**, maintained by `edit_sheet`
+find/replace diffs (failures reported back to it). It acts by calling the tools above.
 
 ## the screen
 
@@ -69,9 +78,11 @@ speech automatically joins every other AI's next transcript. browser TTS is the 
 ## files
 
 - `server.js` — node http server + scheduler + audio/mic wiring (auto-retries silent failures)
-- `pi-core.js` — the agent core on `@earendil-works/pi-agent-core`: one Pi `Agent` per turn, custom StreamFn over the claude CLI / openrouter backends
+- `pi-core.js` — the agent core on `@earendil-works/pi-agent-core`: one Pi `Agent` per turn, decomposed native tools aggregated into a per-turn result
+- `pi-auth.js` — Anthropic OAuth credential store + `Models` (anthropic + openrouter providers), model-spec resolution
+- `login.js` — one-time `node login.js` OAuth browser flow → `game/auth.json`
 - `public/index.html` — the UI
-- `prompts/system-template.md` — the model-facing briefing/contract (picked up on next push)
+- `prompts/system-template.md` — the model-facing briefing/tool contract (picked up on next push)
 - `rules/trouble-brewing.md` — wiki-verified ruleset; each AI's card opens with its role's rules
 - `voices/` — synth.sh + models + samples + report
 - `game/` — live state, per-player system prompts, raw jsonl logs (crash-safe; restart freely)

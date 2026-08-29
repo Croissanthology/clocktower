@@ -1,289 +1,168 @@
-// clocktower agent core, ported onto @earendil-works/pi-agent-core.
+// clocktower agent core, on @earendil-works/pi-agent-core.
 //
-// Each AI player turn runs through a Pi `Agent`: one user message in, one
-// assistant message out, no tools (the clocktower contract is single-shot
-// strict-JSON — the player's only memory is its sheet, not the transcript).
+// Each AI turn runs through a Pi `Agent` authenticated against your Claude
+// subscription via OAuth (see pi-auth.js) — no claude -p CLI, no API tokens.
 //
-// The subscription model is preserved: instead of a network provider we install
-// a custom `StreamFn` that wraps the two backends clocktower already uses —
-// headless `claude -p` (rides the Claude subscription, no API tokens) and
-// OpenRouter over HTTPS. Pi's StreamFn contract is "never throw; encode every
-// failure as an error event carrying an AssistantMessage with stopReason
-// 'error'/'aborted'". That is the robustness win: a CLI crash, a timeout, a
-// malformed OpenRouter body, or an abort all arrive as one clean, typed result
-// on exactly one code path, and the Agent surfaces them via state.errorMessage
-// instead of leaking as an unhandled rejection or a half-written callback.
-import { Agent } from "@earendil-works/pi-agent-core";
-import { createAssistantMessageEventStream } from "@earendil-works/pi-ai";
-import { execFile } from "node:child_process";
-import { readFileSync } from "node:fs";
-import https from "node:https";
+// The model acts by calling DECOMPOSED NATIVE TOOLS (say / set_action /
+// edit_sheet / ask_storyteller / whisper / set_status), each schema-validated by
+// the framework. Rather than mutate game state from inside the tools (which would
+// couple this module to the whole server), every tool records its intent into a
+// per-turn `collected` accumulator; the server then applies those intents with
+// its existing side-effect logic (queueing speech, night-hold, whisper routing,
+// sheet edits, history, fate). Every tool result sets `terminate: true` so the
+// agent stops after one tool batch — one decision per tick, no follow-up call.
+import { Agent } from '@earendil-works/pi-agent-core';
+import { Type } from 'typebox';
+import fs from 'node:fs';
+import { getModels, resolveModel } from './pi-auth.js';
 
-const EMPTY_USAGE = {
-	input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
-	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-};
+// NOTE: no `terminate` flag. The model calls its tools across one or more turns
+// (set_status, then say/ask, etc.) and the agent loop ends naturally when it
+// stops calling tools — forcing termination after the first batch would drop the
+// later calls. The per-turn timeout in runPlayerTurn is the backstop.
+const done = (text) => ({ content: [{ type: 'text', text }], details: {} });
+const str = (v) => String(v == null ? '' : v);
 
-// A minimal but valid Model<Api>. Our own StreamFn is the only thing that reads
-// it, so the fields just have to be well-formed — no real provider is contacted.
-function fakeModel(backend, modelId) {
-	return {
-		id: modelId,
-		name: modelId,
-		api: "anthropic-messages",
-		provider: backend, // "claude-cli" | "openrouter" — dispatched on in the StreamFn
-		baseUrl: "",
-		reasoning: true,
-		input: ["text"],
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-		contextWindow: 200000,
-		maxTokens: 8192,
-	};
+// The full per-tick toolset. Each execute() appends to `c` (the accumulator).
+function fullTools(c) {
+  return [
+    {
+      name: 'set_status', label: 'Status',
+      description: 'Record one short PRIVATE line for Margot about what you are doing this tick. Call once per tick.',
+      parameters: Type.Object({ status: Type.String({ description: 'one short line, private to Margot' }) }),
+      execute: async (id, p) => { c.status = str(p.status); return done('noted'); },
+    },
+    {
+      name: 'say', label: 'Say',
+      description: 'Say ONE line ALOUD to the table — everyone hears it through the speaker. Call again for more lines. Do NOT call at night; night speech is held and not spoken.',
+      parameters: Type.Object({
+        to: Type.Optional(Type.String({ description: '"town" (default) or a player name for a directed remark (still heard by all)' })),
+        text: Type.String({ description: 'spoken-word line: 2-4 short sentences, said in a breath' }),
+      }),
+      execute: async (id, p) => { if (str(p.text).trim()) c.say.push({ to: str(p.to) || 'town', text: str(p.text) }); return done('queued'); },
+    },
+    {
+      name: 'set_action', label: 'Action',
+      description: 'Submit a game action — ONLY when Margot asked you to act (vote / nominate / night ability / demon kill / slayer shot). Never invent one unprompted.',
+      parameters: Type.Object({
+        type: Type.Union([
+          Type.Literal('vote'), Type.Literal('nominate'), Type.Literal('night_ability'),
+          Type.Literal('demon_kill'), Type.Literal('slayer_shot'), Type.Literal('other'),
+        ]),
+        target: Type.Optional(Type.String({ description: 'target player name (or names)' })),
+      }),
+      execute: async (id, p) => { c.action = { type: str(p.type), target: str(p.target) }; return done('flashed to storyteller'); },
+    },
+    {
+      name: 'edit_sheet', label: 'Edit sheet',
+      description: 'Update your private sheet (your ONLY memory between ticks). Use `append` for event-log lines (never fails); use `find`+`replace` to update dossiers/plans (find must match character-for-character). Call multiple times.',
+      parameters: Type.Object({
+        find: Type.Optional(Type.String({ description: 'exact text currently in your sheet' })),
+        replace: Type.Optional(Type.String({ description: 'its replacement' })),
+        append: Type.Optional(Type.String({ description: 'new line(s) added to the end' })),
+      }),
+      execute: async (id, p) => {
+        if (typeof p.append === 'string' && p.append.trim()) c.edits.push({ append: p.append });
+        else if (typeof p.replace === 'string') c.edits.push({ find: str(p.find), replace: p.replace });
+        return done('sheet updated');
+      },
+    },
+    {
+      name: 'ask_storyteller', label: 'Ask',
+      description: 'Ask Margot a short question (rules clarification, garbled transcript, seating). The answer arrives a later tick. Use sparingly.',
+      parameters: Type.Object({ text: Type.String() }),
+      execute: async (id, p) => { if (str(p.text).trim()) c.ask = str(p.text).trim(); return done('sent to Margot'); },
+    },
+    {
+      name: 'whisper', label: 'Whisper',
+      description: 'Send a PRIVATE text reply to a player who whispered you, or a private machine-to-machine note to another AI player (budgeted). Never spoken aloud.',
+      parameters: Type.Object({
+        to: Type.String({ description: 'the whisperer, or another AI player name' }),
+        text: Type.String(),
+      }),
+      execute: async (id, p) => { if (str(p.text).trim() && str(p.to).trim()) c.whisper.push({ to: str(p.to), text: str(p.text) }); return done('whispered'); },
+    },
+  ];
 }
 
-function baseAssistant(model) {
-	return {
-		role: "assistant",
-		content: [],
-		api: model.api,
-		provider: model.provider,
-		model: model.id,
-		usage: { ...EMPTY_USAGE },
-		stopReason: "pending",
-		timestamp: Date.now(),
-	};
+// The lean toolset for quick-whisper replies.
+function whisperTools(c) {
+  return [
+    {
+      name: 'whisper', label: 'Whisper',
+      description: 'Your private reply to a whisperer — one call per person. Read on their screen, never spoken.',
+      parameters: Type.Object({ to: Type.String(), text: Type.String() }),
+      execute: async (id, p) => { if (str(p.text).trim() && str(p.to).trim()) c.whisper.push({ to: str(p.to), text: str(p.text) }); return done('whispered'); },
+    },
+    {
+      name: 'record_note', label: 'Note',
+      description: 'One line for the PRIVATE section of your sheet recording what they told you and what you answered.',
+      parameters: Type.Object({ note: Type.String() }),
+      execute: async (id, p) => { c.note = str(p.note); return done('noted'); },
+    },
+  ];
 }
 
-// Pull the user text back out of the Pi context. `agent.prompt(string)` stores it
-// as a UserMessage whose content is that string.
-function lastUserText(context) {
-	for (let i = context.messages.length - 1; i >= 0; i--) {
-		const m = context.messages[i];
-		if (m.role !== "user") continue;
-		return typeof m.content === "string"
-			? m.content
-			: (m.content || []).filter((c) => c.type === "text").map((c) => c.text).join("");
-	}
-	return "";
-}
-
-// claude CLI stream-json → {text, thinking}. Falls back to treating the blob as
-// plain text (mirrors the original server.js parser).
-function parseStreamJson(stdout) {
-	let text = "", thinking = "", parsedAny = false;
-	for (const line of stdout.split("\n")) {
-		const l = line.trim();
-		if (!l.startsWith("{")) continue;
-		try {
-			const j = JSON.parse(l);
-			parsedAny = true;
-			if (j.type === "assistant" && j.message && Array.isArray(j.message.content)) {
-				for (const b of j.message.content) {
-					if (b.type === "thinking" && b.thinking) thinking += b.thinking + "\n";
-					if (b.type === "text" && b.text) text += b.text;
-				}
-			}
-			if (j.type === "result" && typeof j.result === "string") text = j.result;
-		} catch (e) {}
-	}
-	if (!parsedAny) return { text: stdout, thinking: "" };
-	return { text: text.trim(), thinking: thinking.trim() };
-}
-
-// Backend 1: headless claude on the subscription. Resolves {text, thinking} or
-// rejects; the StreamFn wrapper turns a rejection into a stream error event.
-function runClaudeCli({ model, sysFile, userMsg, effort, cwd, timeoutMs, signal }) {
-	return new Promise((resolve, reject) => {
-		const args = [
-			"-p", "--model", model, "--effort", effort,
-			"--system-prompt-file", sysFile, "--no-session-persistence", "--disallowedTools", "*",
-			"--output-format", "stream-json", "--verbose",
-		];
-		const child = execFile(
-			"claude", args,
-			{ cwd, timeout: timeoutMs, maxBuffer: 50 * 1024 * 1024 },
-			(err, stdout, stderr) => {
-				const { text, thinking } = parseStreamJson((stdout || "").trim());
-				// Match the original contract: an error is only fatal if nothing came
-				// back. A non-zero exit that still produced parseable text is usable.
-				if (err && !text) {
-					const e = new Error(`claude cli: ${String(err).slice(0, 300)}`);
-					e.stderr = (stderr || "").slice(0, 2000);
-					return reject(e);
-				}
-				resolve({ text, thinking, stderr: (stderr || "").slice(0, 2000) });
-			},
-		);
-		if (signal) {
-			if (signal.aborted) { try { child.kill("SIGTERM"); } catch (e) {} }
-			else signal.addEventListener("abort", () => { try { child.kill("SIGTERM"); } catch (e) {} }, { once: true });
-		}
-		try { child.stdin.write(userMsg); child.stdin.end(); } catch (e) { reject(e); }
-	});
-}
-
-// Backend 2: OpenRouter over HTTPS (any model id containing "/").
-function runOpenrouter({ model, sysText, userMsg, effort, maxTokens, key, timeoutMs, signal }) {
-	return new Promise((resolve, reject) => {
-		if (!key) return reject(new Error("no openrouter key — paste it into clocktower/openrouter.key (one line) or set OPENROUTER_API_KEY"));
-		const bodyStr = JSON.stringify({
-			model, max_tokens: maxTokens, reasoning: { effort },
-			messages: [{ role: "system", content: sysText }, { role: "user", content: userMsg }],
-		});
-		const req = https.request({
-			hostname: "openrouter.ai", path: "/api/v1/chat/completions", method: "POST",
-			headers: {
-				"Authorization": "Bearer " + key,
-				"Content-Type": "application/json",
-				"Content-Length": Buffer.byteLength(bodyStr),
-			},
-			timeout: timeoutMs,
-		}, (res) => {
-			let d = "";
-			res.on("data", (c) => (d += c));
-			res.on("end", () => {
-				try {
-					const j = JSON.parse(d);
-					if (j.error) return reject(new Error("openrouter: " + String(j.error.message || JSON.stringify(j.error)).slice(0, 200)));
-					const m = (j.choices || [])[0]?.message || {};
-					resolve({
-						text: (m.content || "").trim(),
-						thinking: (m.reasoning || m.reasoning_content || "").trim(),
-						stderr: "",
-					});
-				} catch (e) {
-					reject(new Error("openrouter bad response: " + d.slice(0, 200)));
-				}
-			});
-		});
-		req.on("timeout", () => req.destroy(new Error("openrouter timeout")));
-		req.on("error", reject);
-		if (signal) {
-			if (signal.aborted) req.destroy(new Error("aborted"));
-			else signal.addEventListener("abort", () => req.destroy(new Error("aborted")), { once: true });
-		}
-		req.write(bodyStr);
-		req.end();
-	});
-}
-
-// Build the per-turn StreamFn. It closes over the backend + params for this one
-// player turn, so the Model/options plumbing stays trivial. It NEVER throws:
-// every outcome is pushed onto the returned stream as `done` or `error`.
-function makeStreamFn(cfg) {
-	return (model, context, options) => {
-		const stream = createAssistantMessageEventStream();
-		const signal = options?.signal;
-		const partial = baseAssistant(model);
-		stream.push({ type: "start", partial });
-
-		const backend = cfg.backend === "openrouter"
-			? runOpenrouter({
-					model: cfg.model, sysText: cfg.sysText ?? readFileSync(cfg.sysFile, "utf8"),
-					userMsg: lastUserText(context), effort: cfg.effort, maxTokens: cfg.maxTokens,
-					key: cfg.openrouterKey, timeoutMs: cfg.timeoutMs, signal,
-			  })
-			: runClaudeCli({
-					model: cfg.model, sysFile: cfg.sysFile, userMsg: lastUserText(context),
-					effort: cfg.effort, cwd: cfg.cwd, timeoutMs: cfg.timeoutMs, signal,
-			  });
-
-		backend.then(
-			({ text, thinking, stderr }) => {
-				const content = [];
-				if (thinking) content.push({ type: "thinking", thinking });
-				content.push({ type: "text", text: text || "" });
-				const message = {
-					...partial, content,
-					stopReason: "stop", stderr, timestamp: Date.now(),
-				};
-				stream.push({ type: "text_start", contentIndex: 0, partial: message });
-				stream.push({ type: "text_delta", contentIndex: 0, delta: text || "", partial: message });
-				stream.push({ type: "text_end", contentIndex: 0, content: text || "", partial: message });
-				stream.push({ type: "done", reason: "stop", message });
-			},
-			(err) => {
-				const aborted = signal?.aborted || /abort/i.test(String(err && err.message));
-				const error = {
-					...partial, content: [],
-					stopReason: aborted ? "aborted" : "error",
-					errorMessage: String((err && err.message) || err).slice(0, 500),
-					stderr: (err && err.stderr) || "",
-					timestamp: Date.now(),
-				};
-				stream.push({ type: "error", reason: aborted ? "aborted" : "error", error });
-			},
-		);
-
-		return stream;
-	};
-}
+function readFileSafe(f) { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return ''; } }
 
 /**
- * Run one clocktower player turn through a Pi Agent.
+ * Run one clocktower turn through a Pi Agent with native tools.
  *
  * @param {object} o
- * @param {string} o.name       player name (for labelling only)
- * @param {"claude-cli"|"openrouter"} o.backend
- * @param {string} o.model      concrete model id passed to the backend
+ * @param {string} o.name
+ * @param {string} o.model      app model spec (e.g. "sonnet", "or:...", "anthropic/...")
  * @param {string} o.sysFile    path to the player's system-prompt file
  * @param {string} o.userMsg    the built user message for this tick
- * @param {string} o.effort     thinking level ("off"|"low"|"medium"|"high"|...)
- * @param {number} o.maxTokens  output cap (openrouter)
- * @param {string} o.cwd        working dir for the claude CLI
- * @param {number} o.timeoutMs  hard per-call timeout
- * @param {string} [o.openrouterKey]
- * @param {AbortSignal} [o.signal]  optional external abort (e.g. phase change)
- * @returns {Promise<{text:string, thinking:string, stderr:string, error:string|null, aborted:boolean}>}
- *          Always resolves — failures come back as `error` (never a rejection).
+ * @param {string} o.effort     thinking level
+ * @param {string} o.authFile   path to game/auth.json (Anthropic OAuth)
+ * @param {string} [o.openrouterKeyFile]
+ * @param {number} [o.timeoutMs]
+ * @param {"full"|"whisper"} [o.toolset]
+ * @param {AbortSignal} [o.signal]
+ * @returns {Promise<{text,thinking,error,aborted,collected}>}  always resolves.
  */
 export async function runPlayerTurn(o) {
-	const model = fakeModel(o.backend, o.model);
-	const thinkingLevel = o.effort === "off" ? "off" : (o.effort || "medium");
-	const agent = new Agent({
-		initialState: {
-			systemPrompt: (() => { try { return readFileSync(o.sysFile, "utf8"); } catch (e) { return ""; } })(),
-			model,
-			thinkingLevel,
-		},
-		streamFn: makeStreamFn({
-			backend: o.backend, model: o.model, sysFile: o.sysFile,
-			effort: o.effort, maxTokens: o.maxTokens ?? 8000, cwd: o.cwd,
-			timeoutMs: o.timeoutMs ?? 120000, openrouterKey: o.openrouterKey || "",
-		}),
-	});
+  const models = getModels(o.authFile, o.openrouterKeyFile);
+  let model;
+  try { model = resolveModel(models, o.model); }
+  catch (e) { return { text: '', thinking: '', error: str(e.message || e), aborted: false, collected: null }; }
 
-	// External abort (optional): wire it to the Agent's own abort path.
-	if (o.signal) {
-		if (o.signal.aborted) agent.abort();
-		else o.signal.addEventListener("abort", () => agent.abort(), { once: true });
-	}
+  const collected = o.toolset === 'whisper'
+    ? { whisper: [], note: '' }
+    : { status: '', say: [], action: null, ask: '', edits: [], whisper: [] };
+  const tools = o.toolset === 'whisper' ? whisperTools(collected) : fullTools(collected);
+  const thinkingLevel = o.effort === 'off' ? 'off' : (o.effort || 'medium');
 
-	try {
-		await agent.prompt(o.userMsg);
-		await agent.waitForIdle();
-	} catch (e) {
-		// The loop is contracted not to throw, but guard anyway so callers always
-		// get a value, never a rejection.
-		return { text: "", thinking: "", stderr: "", error: String((e && e.message) || e).slice(0, 500), aborted: false };
-	}
+  const agent = new Agent({
+    initialState: { systemPrompt: readFileSafe(o.sysFile), model, thinkingLevel, tools },
+    streamFn: models.streamSimple.bind(models),
+  });
 
-	const msgs = agent.state.messages;
-	let final = null;
-	for (let i = msgs.length - 1; i >= 0; i--) if (msgs[i].role === "assistant") { final = msgs[i]; break; }
+  // hard timeout + optional external abort, both routed to the Agent's abort
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), o.timeoutMs || 120000);
+  if (o.signal) { if (o.signal.aborted) ac.abort(); else o.signal.addEventListener('abort', () => ac.abort(), { once: true }); }
+  ac.signal.addEventListener('abort', () => agent.abort(), { once: true });
 
-	if (!final) {
-		return { text: "", thinking: "", stderr: "", error: agent.state.errorMessage || "no assistant message produced", aborted: false };
-	}
-	const text = (final.content || []).filter((c) => c.type === "text").map((c) => c.text).join("");
-	const thinking = (final.content || []).filter((c) => c.type === "thinking").map((c) => c.thinking).join("\n").trim();
-	const aborted = final.stopReason === "aborted";
-	const errored = final.stopReason === "error" || final.stopReason === "aborted";
-	return {
-		text,
-		thinking,
-		stderr: final.stderr || "",
-		error: errored ? (final.errorMessage || "stream error") : null,
-		aborted,
-	};
+  try {
+    await agent.prompt(o.userMsg);
+    await agent.waitForIdle();
+  } catch (e) {
+    clearTimeout(timer);
+    return { text: '', thinking: '', error: str(e.message || e).slice(0, 500), aborted: ac.signal.aborted, collected };
+  }
+  clearTimeout(timer);
+
+  // the turn may span several assistant messages (tool call → results → more
+  // calls → stop); this Agent is fresh per turn, so every assistant message here
+  // belongs to this tick. Aggregate their text/thinking; use the last for status.
+  const assistants = agent.state.messages.filter((m) => m.role === 'assistant');
+  const last = assistants[assistants.length - 1];
+  const pick = (kind, key) => assistants.flatMap((m) => (m.content || []).filter((c) => c.type === kind).map((c) => c[key]));
+  const text = pick('text', 'text').join('');
+  const thinking = pick('thinking', 'thinking').join('\n').trim();
+  const aborted = ac.signal.aborted;
+  let error = last && (last.stopReason === 'error' || last.stopReason === 'aborted') ? (last.errorMessage || 'stream error') : (agent.state.errorMessage || null);
+  if (aborted && !error) error = 'aborted';
+  return { text, thinking, error, aborted, collected };
 }
