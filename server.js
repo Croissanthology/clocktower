@@ -20,6 +20,7 @@ const AUTH_FILE = path.join(GAME, 'auth.json');            // Anthropic OAuth to
 const OPENROUTER_KEY_FILE = path.join(ROOT, 'openrouter.key');
 const RULES_FILE = path.join(ROOT, 'rules', 'trouble-brewing.md');
 const TEMPLATE_FILE = path.join(ROOT, 'prompts', 'system-template.md');
+const PERSONALITIES_DIR = path.join(ROOT, 'personalities');
 const PORT = process.env.PORT || 4141;
 const MODEL = process.env.CT_MODEL || 'sonnet';
 const EFFORT = process.env.CT_EFFORT || 'medium'; // thinking on by default, both backends
@@ -115,6 +116,27 @@ function roster() {
 function storytellerNote() {
   if (!stEnabled()) return '';
   return ` The Storyteller wears a microphone too: lines that start \`STORYTELLER (${stName()}):\` are him speaking aloud to the whole table. Treat his procedural words — who is nominated, what the vote count is, who dies, what the phase is — as true and final. What he says while telling the story is still the story.`;
+}
+
+// each file in personalities/ is a prewritten AI persona: an optional
+// `---` frontmatter block (name, model) followed by the persona text.
+function loadPersonalities() {
+  try {
+    return fs.readdirSync(PERSONALITIES_DIR).filter(f => f.endsWith('.md')).map(f => {
+      const raw = fs.readFileSync(path.join(PERSONALITIES_DIR, f), 'utf8');
+      const m = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
+      const meta = {};
+      let persona = raw.trim();
+      if (m) {
+        for (const line of m[1].split('\n')) {
+          const kv = line.match(/^(\w+):\s*(.*)$/);
+          if (kv) meta[kv[1]] = kv[2].trim();
+        }
+        persona = m[2].trim();
+      }
+      return { file: f, name: meta.name || f.replace(/\.md$/, ''), model: meta.model || '', persona };
+    }).sort((a, b) => a.name.localeCompare(b.name));
+  } catch (e) { return []; }
 }
 
 function seatingFor(p) {
@@ -954,6 +976,9 @@ function fixNames(text) {
       mics, stMics, storyteller: state.storyteller, humans: state.humans, speaking: state.speaking,
       echoGuard: process.env.CT_ECHO_GUARD !== '0', phase: phaseLabel(), ctxLen: state.ctx.length,
     });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/personalities') {
+    return send(200, { personalities: loadPersonalities() });
   }
   if (req.method === 'GET' && url.pathname === '/api/models') {
     if (Date.now() - modelsCache.ts < 3600e3 && modelsCache.list.length) return send(200, { models: modelsCache.list });

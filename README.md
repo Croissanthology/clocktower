@@ -47,7 +47,7 @@ find/replace diffs (failures reported back to it). It acts by calling the tools 
 
 ## the screen
 
-- **home** — 4 colored boxes: NAME first (Alligator is green), role, model. status line, pink
+- **home** — 4 colored boxes: NAME first (the first AI row is green), role, model. status line, pink
   actions (click → fullscreen flash to show the storyteller, which also acks), yellow `?`
   questions (click → that AI's dashboard to answer via the private box), queued speech with
   speak buttons. bottom bar always focused: type + `enter` pushes to everyone.
@@ -59,8 +59,10 @@ find/replace diffs (failures reported back to it). It acts by calling the tools 
   the AI's private box.
 - **↓ anywhere → CONTEXT, ↑ anywhere → home** (sheet editor and setup keep normal arrows).
   `esc` home; `1–4` open an AI when nothing is focused.
-- **setup** — AI rows (name/model/role/persona; blank name = model name) + a storyteller name +
-  human players: pick how many, name each, mics are numbered in order. roster is injected into
+- **setup** — AI rows (personality/name/model/role/persona; blank name = model name) + a
+  storyteller name + human players: pick how many, name each, mics are numbered in order. the
+  personality field picks a prewritten persona from `personalities/*.md` and fills in the name,
+  model, and persona text; you can still edit any of them by hand. roster is injected into
   every AI's briefing. dealing starts at night 1 and auto-fires first-night choosers.
 - **auto** — pushes the buffer every 30/45/60/90s; mid-turn AIs skipped; empty push = listen.
 - **mics** — the table transcriber (mixer channels) plus a separate **storyteller** row: pick
