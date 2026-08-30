@@ -53,6 +53,7 @@
     <div class="mics" id="mics"></div>
     <button id="startb" onclick="api('/api/start',{})">start fresh</button>
     <button id="pauseb" onclick="api('/api/pause',{})">pause</button>
+    <button onclick="api('/api/advance',{skip:true})">skip stage</button>
     <a href="/mics" target="_blank" style="color:#9be3e8">mics</a><a href="/door" target="_blank" style="color:#9be3e8">door</a></div>
   <div class="main">
     <div class="scroll"><div class="lbl">the scroll-creature · a base model continues the White Rabbit's notebook</div>
@@ -76,7 +77,7 @@ async function poll(){
   try{ const S=await api('/api/state');
     document.getElementById('pauseb').className=S.paused?'on':''; document.getElementById('pauseb').textContent=S.paused?'PAUSED — resume':'pause';
     document.getElementById('startb').className=S.running?'':'on';
-    const rung=(S.ladder||[])[S.rung||0]; document.getElementById('stage').textContent=(S.stage||'idle')+(S.active?' · '+S.active:'')+(S.stage==='scroll'&&rung?'   word: '+rung.word+(rung.humansSaidIt?' (SPOILT — click forgive)':''):'')+(S.stage==='user'&&S.subject?'   poem about '+S.subject:'')+'   (space = next stage)';
+    const rung=(S.ladder||[])[S.rung||0]; document.getElementById('stage').textContent=(S.stage||'idle')+(S.active?' · '+S.active:'')+(S.stage==='scroll'&&rung?'   word: '+rung.word+(rung.humansSaidIt?' (SPOILT — click forgive)':''):'')+(S.stage==='user'&&S.subject?'   poem about '+S.subject:'')+'   (space = begin)';
     document.getElementById('stage').onclick=()=>{ if(S.stage==='scroll') api('/api/forgive',{}); };
     document.getElementById('mics').innerHTML=[1,2,3,4,5,6,7].map(i=>{const m=S.mics[i]; const live=S.micSpeech&&S.micSpeech[i-1]!=null&&S.micSpeech[i-1]<4; return `<span class="${live?'live':''}">${i} ${m?esc(m.name):''}</span>`;}).join('');
     document.getElementById('chars').innerHTML=S.chars.map(c=>`<div class="card" style="--h:${c.hue}"><div class="nm">${esc(c.name)}<span class="dot ${c.status==='thinking'?'on':''}"></span></div><div class="st">${esc(c.lastStatus)}</div><button onclick="api('/api/nudge',{name:'${esc(c.name)}'})">nudge</button></div>`).join('');

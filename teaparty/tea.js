@@ -304,7 +304,13 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'POST' && url.pathname === '/api/miclevels') { const b = await body(req); state.micLevels = b.levels || []; state.micSpeech = b.speech_ago || []; state.micTs = Date.now(); return send(200, { ok: true }); }
   if (req.method === 'POST' && url.pathname === '/api/start') { state.running = true; state.paused = false; state.ctx = []; state.queue = []; state.turnN = 0; lastHeardCount = 0; state.mics = {}; state.door = { open: false, attempts: [] }; state.base.text = ''; resetChars(); resetPuzzles(); state.lastTick = 0; state.stage = 'idle'; state.active = null; state.pendingAdvance = null; state.subject = null; save(); return send(200, { ok: true }); }
-  if (req.method === 'POST' && url.pathname === '/api/advance') { const b = await body(req); if (!state.running) { state.running = true; state.paused = false; } if (b.stage && STAGES.includes(b.stage)) setStage(b.stage); else advance(); return send(200, { stage: state.stage, active: state.active }); }
+  if (req.method === 'POST' && url.pathname === '/api/advance') {
+    const b = await body(req); if (!state.running) { state.running = true; state.paused = false; }
+    if (b.stage && STAGES.includes(b.stage)) setStage(b.stage);
+    else if (b.skip) advance();
+    else if ((state.stage || 'idle') === 'idle') advance();          // space: starts the series once; later presses are ignored
+    return send(200, { stage: state.stage, active: state.active });
+  }
   if (req.method === 'POST' && url.pathname === '/api/pause') { const b = await body(req); state.paused = b.paused !== undefined ? !!b.paused : !state.paused; if (state.paused && speakChild) try { speakChild.kill('SIGKILL'); } catch (e) {} save(); return send(200, { paused: state.paused }); }
   if (req.method === 'POST' && url.pathname === '/api/micsetup') { const b = await body(req); state.micSetup = !!b.on; save(); return send(200, { micSetup: state.micSetup }); }
   if (req.method === 'POST' && url.pathname === '/api/register') { const b = await body(req); const n = +b.mic; if (n) { if (b.name) state.mics[n] = { name: String(b.name), ts: Date.now() }; else delete state.mics[n]; } save(); return send(200, { mics: state.mics }); }

@@ -46,7 +46,9 @@
   /* the active screen: only this creature's words, big, arriving with the voice */
   #stage { display:none; flex:1; width:min(900px,92vw); align-items:center; justify-content:center; text-align:center; flex-wrap:wrap; align-content:center;
     font-size:clamp(28px, 4.2vw, 52px); line-height:1.35; color:var(--ink); text-shadow:0 0 22px hsl(var(--hue) 70% 60% / .5), 0 2px 0 #000; padding:2vh 0; }
-  body.active #stage { display:flex; } body.active #feed { display:none; }
+  #stage { display:flex; } #feed { display:none; }
+  body.transcript #feed { display:block; } body.transcript #stage { display:none; }
+  .line.heard.bright { color:var(--ink); font-size:24px; font-style:normal; }
   #stage .w { opacity:0; display:inline-block; margin-right:.28em; transform:translateY(6px); transition:opacity .35s, transform .35s; }
   #stage .w.on { opacity:1; transform:none; }
   .scroll #stage { font-family:"Courier New", Courier, monospace; font-size:clamp(24px,3.4vw,40px); color:#e8d9b0; text-align:left; }
@@ -63,6 +65,8 @@
 <script>
 const nParam = new URLSearchParams(location.search).get('n') || '1';
 let n = +nParam || 1; const AUTO = nParam === 'auto';   // ?n=auto → this screen follows whoever is speaking / active
+const TRANSCRIPT = nParam === 'transcript';               // ?n=transcript → the live room transcript, always bright
+document.addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); fetch('/api/advance', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); } });
 function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 function letters(s){ let i=0; return esc(s).replace(/(&[a-z]+;|.)/g, m=>`<span class="ch" style="animation-delay:${(i++)*22}ms">${m}</span>`); }
 // static
@@ -81,6 +85,12 @@ function reveal(text, rate){
 async function poll(){
   try{
     const S=await (await fetch('/api/state')).json();
+    if (TRANSCRIPT) {
+      document.documentElement.style.setProperty('--hue', 120); document.getElementById('name').textContent = 'transcript'; document.body.className = 'transcript';
+      if (S.ctx.length !== lastLen) { lastLen = S.ctx.length; const f = document.getElementById('feed'); const items = S.ctx.slice(-60);
+        f.innerHTML = items.map(e => e.kind === 'heard' ? `<p class="line heard bright">${esc(e.who)}: ${esc(e.text)}</p>` : e.kind === 'say' ? `<p class="line creature other"><b style="color:hsl(${(S.cfg.characters.find(c=>c.name===e.player)||{hue:0}).hue} 70% 75%)">${esc(e.player)}</b>${esc(e.text)}</p>` : `<p class="line phase">${esc(e.text)}</p>`).join(''); f.scrollTop = f.scrollHeight; }
+      setTimeout(poll, 900); return;
+    }
     if (AUTO) { const want = (S.speaking && S.speaking.player) || S.active || (S.cfg.characters[2] && S.cfg.characters[2].name); const i = S.cfg.characters.findIndex(c => c.name === want); if (i >= 0) n = i + 1; }
     me = S.cfg.characters[n-1];
     if(me){ document.documentElement.style.setProperty('--hue', me.hue); document.getElementById('name').textContent=me.name;
@@ -89,7 +99,7 @@ async function poll(){
       const isActive = S.active===me.name || speakingMe;
       document.body.className = cls + (isActive ? ' active' : ' dim') + (justSpoke ? ' flash' : ''); justSpoke=false;
       if (speakingMe && S.speaking.text!==revealText) reveal(S.speaking.text, S.rate||0.95);
-      else if (!speakingMe && isActive) { // between lines: keep the last thing it said on screen, fully shown
+      else if (!speakingMe) { // between lines: keep the last thing it said on screen, fully shown
         const mine=S.ctx.filter(e=>e.kind==='say'&&e.player===me.name); const last=mine[mine.length-1];
         if(last && last.text!==revealText){ revealText=last.text; clearInterval(revealTimer); document.getElementById('stage').innerHTML=last.text.split(/\s+/).map(w=>`<span class="w on">${esc(w)}</span>`).join(''); }
         if(!last && !document.getElementById('stage').innerHTML) document.getElementById('stage').innerHTML=`<span class="w on" style="color:hsl(var(--hue) 40% 60%)">…</span>`; } }
