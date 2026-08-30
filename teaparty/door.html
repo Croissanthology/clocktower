@@ -43,4 +43,17 @@ async function go(ev){ ev.preventDefault(); const w=document.getElementById('w')
   else { wrap.classList.remove('shake'); void wrap.offsetWidth; wrap.classList.add('shake'); }
   w.value=''; w.focus(); }
 </script>
+
+<script>
+// keep cheap laptops awake: a screen wake lock (re-taken on any tap and every 30 s) PLUS a silently "playing"
+// video fed from the static canvas — chromium treats live media playback as a reason not to sleep the display
+(function(){
+  let wake=null; async function hold(){ try{ if(navigator.wakeLock && !wake){ wake=await navigator.wakeLock.request('screen'); wake.addEventListener('release',()=>{wake=null;}); } }catch(e){} }
+  document.addEventListener('click',hold,{passive:true}); document.addEventListener('keydown',hold,{passive:true});
+  document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') hold(); }); setInterval(hold,30000); hold();
+  try{ const c=document.getElementById('noise')||document.createElement('canvas'); const v=document.createElement('video');
+    v.muted=true; v.playsInline=true; v.autoplay=true; v.loop=true; v.style.cssText='position:fixed;width:2px;height:2px;opacity:.01;pointer-events:none;bottom:0;right:0';
+    v.srcObject=c.captureStream(4); document.body.appendChild(v); const p=()=>v.play().catch(()=>{}); p(); document.addEventListener('click',p,{passive:true}); setInterval(p,15000); }catch(e){}
+})();
+</script>
 </body>
