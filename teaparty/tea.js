@@ -127,7 +127,7 @@ function pump() {
   else playFile(q.file, q.channel, after);
 }
 setInterval(pump, 400);
-function trimLine(text, maxWords = 42) {
+function trimLine(text, maxWords = 75) {
   const sents = String(text).match(/[^.!?…]+[.!?…]+["')]?|[^.!?…]+$/g) || [String(text)];
   let out = '', n = 0;
   for (const se of sents) { const w = se.trim().split(/\s+/).length; if (out && n + w > maxWords) break; out += (out ? ' ' : '') + se.trim(); n += w; if (n >= maxWords) break; }

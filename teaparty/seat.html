@@ -120,6 +120,9 @@ async function poll(){
   setTimeout(poll, 900);
 }
 poll();
+// space on ANY screen starts the party (only from idle — later stages advance from the main screen)
+document.addEventListener('keydown', async e=>{ if(e.code!=='Space') return; e.preventDefault(); /* startOnSpace */
+  try{ const S=await (await fetch('/api/state')).json(); if((S.stage||'idle')==='idle') await fetch('/api/advance',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); }catch(err){} });
 </script>
 
 <script>
