@@ -74,8 +74,8 @@ function setStage(st) {
   state.stage = st; state.stageSince = Date.now(); state.active = activeName();
   ctxAppend({ kind: 'phase', text: `— ${st.toUpperCase()} —` });
   const hatter = state.chars.find(c => c.role === 'host');
-  if (st === 'welcome') { enqueue(hatter, HATTER_WELCOME); state.queue[state.queue.length - 1].then = 'caterpillar'; }
-  if (st === 'congrats') { enqueue(hatter, HATTER_CONGRATS); state.queue[state.queue.length - 1].then = 'user'; }
+  if (st === 'welcome') { enqueue(hatter, HATTER_WELCOME, { full: true }); state.queue[state.queue.length - 1].then = 'caterpillar'; }
+  if (st === 'congrats') { enqueue(hatter, HATTER_CONGRATS, { full: true }); state.queue[state.queue.length - 1].then = 'user'; }
   if (st === 'caterpillar') { const c = state.chars.find(x => x.role === 'guest1'); pushOne(c, 'You have just been introduced by the Hatter. Greet the visitors and begin winding your little story about yourself — in questions only.'); }
   if (st === 'user') { if (!state.subject) state.subject = SUBJECTS[Math.floor(Math.random() * SUBJECTS.length)]; const c = state.chars.find(x => x.role === 'guest3'); pushOne(c, 'You have just been introduced. State your request and all its rules, briskly, as if to an assistant.'); }
   save();
@@ -92,7 +92,12 @@ function ctxAppend(e) { state.ctx.push({ ...e, ts: Date.now() }); if (state.ctx.
 const SYNTH = path.join(ROOT, 'voices', 'synth.sh');
 const PY = path.join(ROOT, 'audio', 'venv', 'bin', 'python');
 const PC = path.join(ROOT, 'audio', 'play_channel.py');
-let speakChild = null, speakEndedAt = 0;
+let speakChild = null, speakEndedAt = 0, lastSpoken = '';
+function looksLikeBleed(text) {
+  const w = new Set(norm(text).split(' ').filter(x => x.length > 3)); if (!w.size) return true;
+  const spoken = new Set(norm(lastSpoken).split(' ')); let hit = 0; for (const x of w) if (spoken.has(x)) hit++;
+  return hit / w.size >= 0.5;   // half the content words came out of our own speaker → bleed
+}
 function playFile(file, channel, done) {
   const finish = () => { speakChild = null; done(); };
   if (process.env.CT_AUDIO_DEVICE && fs.existsSync(PC))
@@ -113,7 +118,7 @@ function pump() {
   const q = state.queue[0];
   if (!q.file) { if (!synthBusy) { synthBusy = true; synthToFile(q.voice, q.text, path.join(RUN, `line-${q.id}.wav`), (err, f) => { synthBusy = false; if (err) state.queue.shift(); else q.file = f; save(); }); } return; }
   state.queue.shift();
-  state.speaking = { player: q.name, text: q.text }; state.speakingSince = Date.now(); save();
+  state.speaking = { id: q.id, player: q.name, text: q.text }; state.speakingSince = Date.now(); lastSpoken = q.text; save();
   ctxAppend({ kind: 'say', player: q.name, text: q.text });
   checkCreatureSaid(q.name, q.text);
   const after = () => { state.speaking = null; speakEndedAt = Date.now(); if (q.then) setStage(q.then); else if (state.pendingAdvance && !state.queue.length) { const st = state.pendingAdvance; state.pendingAdvance = null; setStage(st); } save(); };
@@ -122,7 +127,13 @@ function pump() {
   else playFile(q.file, q.channel, after);
 }
 setInterval(pump, 400);
-function enqueue(c, text) { state.queue.push({ id: ++state.seq, name: c.name, voice: c.voice, channel: c.channel, text, ts: Date.now() }); c.lines++; }
+function trimLine(text, maxWords = 42) {
+  const sents = String(text).match(/[^.!?…]+[.!?…]+["')]?|[^.!?…]+$/g) || [String(text)];
+  let out = '', n = 0;
+  for (const se of sents) { const w = se.trim().split(/\s+/).length; if (out && n + w > maxWords) break; out += (out ? ' ' : '') + se.trim(); n += w; if (n >= maxWords) break; }
+  return out || String(text).split(/\s+/).slice(0, maxWords).join(' ');
+}
+function enqueue(c, text, opts = {}) { state.queue.push({ id: ++state.seq, name: c.name, voice: c.voice, channel: c.channel, text: opts.full ? text : trimLine(text), ts: Date.now() }); c.lines++; }
 
 // ---------------- puzzles ----------------
 function norm(t) { return String(t || '').toUpperCase().replace(/[^A-Z0-9 -]/g, ' ').replace(/\s+/g, ' ').trim(); }
@@ -301,7 +312,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'POST' && url.pathname === '/api/hear') {
     const b = await body(req);
-    if ((state.speaking || Date.now() - speakEndedAt < 2000)) return send(200, { ok: true, dropped: 'speaking' });
+    if ((state.speaking || Date.now() - speakEndedAt < 2500) && looksLikeBleed(b.text || '')) return send(200, { ok: true, dropped: 'bleed' });
     handleHeard(+b.mic || 0, b.text); return send(200, { ok: true });
   }
   if (req.method === 'POST' && url.pathname === '/api/miclevels') { const b = await body(req); state.micLevels = b.levels || []; state.micSpeech = b.speech_ago || []; state.micTs = Date.now(); return send(200, { ok: true }); }

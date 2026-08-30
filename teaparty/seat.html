@@ -74,7 +74,7 @@ function letters(s){ let i=0; return esc(s).replace(/(&[a-z]+;|.)/g, m=>`<span c
 const cv=document.getElementById('noise'), cx=cv.getContext('2d'); const img=cx.createImageData(cv.width,cv.height);
 setInterval(()=>{ const d=img.data; for(let i=0;i<d.length;i+=4){ const v=(Math.random()*255)|0; d[i]=d[i+1]=d[i+2]=v; d[i+3]=255; } cx.putImageData(img,0,0); }, 1000/12);
 setInterval(()=>{ if(Math.random()<.5){ cv.classList.add('tear'); setTimeout(()=>cv.classList.remove('tear'), 90+Math.random()*160); } }, 25000);
-let me=null, seen=0, lastLen=-1, justSpoke=false, lastSayTs=0, revealText='', revealTimer=null;
+let me=null, seen=0, lastLen=-1, justSpoke=false, lastSayTs=0, revealText='', revealTimer=null, revealId=null;
 // word-by-word reveal paced to the voice: ~150 wpm at rate 1, plus the teacup chime's head start
 function reveal(text, rate){
   revealText=text; clearInterval(revealTimer);
@@ -99,7 +99,7 @@ async function poll(){
       const speakingMe = S.speaking && S.speaking.player===me.name;
       const isActive = S.active===me.name || speakingMe;
       document.body.className = cls + (isActive ? ' active' : ' dim') + (justSpoke ? ' flash' : ''); justSpoke=false;
-      if (speakingMe && S.speaking.text!==revealText) reveal(S.speaking.text, S.rate||0.95);
+      if (speakingMe && S.speaking.id!==revealId) { revealId=S.speaking.id; reveal(S.speaking.text, S.rate||0.95); }
       else if (!speakingMe) { // between lines: keep the last thing it said on screen, fully shown
         const mine=S.ctx.filter(e=>e.kind==='say'&&e.player===me.name); const last=mine[mine.length-1];
         if(last && last.text!==revealText){ revealText=last.text; clearInterval(revealTimer); document.getElementById('stage').innerHTML=last.text.split(/\s+/).map(w=>`<span class="w on">${esc(w)}</span>`).join(''); }
