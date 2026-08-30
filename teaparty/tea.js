@@ -179,6 +179,7 @@ function norm(t) { return String(t || '').toUpperCase().replace(/[^A-Z0-9 -]/g, 
 function checkCreatureSaid(name, text) {
   const p = state.puzzles;
   const t = currentTarget();
+  if (name === 'Scroll-Creature') state.scrollSaidAt = Date.now();
   if (state.stage === 'scroll' && t && !t.solved && name === 'Scroll-Creature' && norm(text).includes(t.word) && !t.humansSaidIt) {
     t.solved = true; t.by = name; if (state.rung === 0) { p.mushroom.solved = true; p.mushroom.by = name; }
     ctxAppend({ kind: 'phase', text: `RUNG ${state.rung + 1}: THE CREATURE SAID "${t.word}" — the visitors never did` });
@@ -228,7 +229,16 @@ function handleHeard(mic, text) {
   if (state.micSetup && m1) { const n = micNumber(m1[1]); state.mics[n] = { ...(state.mics[n] || {}), verified: true, heardOn: mic, ts: Date.now() }; ctxAppend({ kind: 'phase', text: `mic ${n} check: heard on channel ${mic}${mic !== n ? ' — MISMATCH' : ' — ok'}` }); save(); return; }
   const who = (state.mics[mic] && state.mics[mic].name) || (room.mics[mic] ? room.mics[mic] : null) || `mic ${mic}`;
   ctxAppend({ kind: 'heard', mic, who, text: t });
-  const cur = currentTarget(); if (cur && state.stage === 'scroll' && norm(t).includes(cur.word)) { cur.humansSaidIt = true; ctxAppend({ kind: 'phase', text: `a visitor said "${cur.word}" — this rung is spoilt until the Hatter forgives it` }); }
+  const cur = currentTarget();
+  if (cur && state.stage === 'scroll' && norm(t).includes(cur.word)) {
+    const echo = Date.now() - (state.scrollSaidAt || 0) < 12000 || (state.speaking && state.speaking.player === 'Scroll-Creature');
+    if (!echo) {
+      cur.humansSaidIt = true; ctxAppend({ kind: 'phase', text: `a visitor said "${cur.word}" — spoilt; the Hatter forgives it once` });
+      const hatter = state.chars.find(c => c.role === 'host');
+      enqueue(hatter, `Ah, ah, ah! One of you said the word. It is spoilt on your lips — but I am feeling generous: I shall forget I heard it. The creature must say it again, and none of you may.`);
+      setTimeout(() => { cur.humansSaidIt = false; save(); }, 15000);
+    }
+  }
   save();
 }
 
@@ -392,6 +402,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/check') return page(res, 'check.html');
   if (req.method === 'POST' && url.pathname === '/api/note') { const b = await body(req); if (b.text) handleHeard(0, b.text); return send(200, { ok: true }); }
   if (req.method === 'POST' && url.pathname === '/api/door') { const b = await body(req); const ok = tryDoor(b.word || ''); return send(200, { ok, line: ok ? 'The door remembers the Duchess.' : REJECTIONS[state.door.attempts.length % REJECTIONS.length] }); }
+  if (req.method === 'POST' && url.pathname === '/api/rung') { const cur = currentTarget(); if (cur) { cur.humansSaidIt = false; checkCreatureSaid('Scroll-Creature', cur.word); } return send(200, { rung: state.rung, ladder: state.ladder }); }
   if (req.method === 'POST' && url.pathname === '/api/forgive') { const cur = currentTarget(); if (cur) cur.humansSaidIt = false; save(); return send(200, { ok: true }); }
   if (req.method === 'POST' && url.pathname === '/api/solve') { const b = await body(req); if (state.puzzles[b.puzzle]) { state.puzzles[b.puzzle].solved = !!b.solved; save(); } return send(200, { puzzles: state.puzzles }); }
   if (req.method === 'POST' && url.pathname === '/api/auto') { const b = await body(req); if (b.volume !== undefined) state.volume = +b.volume; if (b.rate !== undefined) state.rate = +b.rate; save(); return send(200, { ok: true }); }
