@@ -158,8 +158,11 @@ def main():
         die(f"--rate must be positive (got {args.rate})")
     if args.rate != 1.0:
         data = resample_linear(data, args.rate)
+    peak = float(np.max(np.abs(data))) if len(data) else 0.0
+    if peak > 0.01:
+        data = (data / peak * 0.98).astype("float32")   # normalise to full scale first
     if args.gain != 1.0:
-        data = (data * args.gain).astype("float32")
+        data = np.clip(data * args.gain, -1.0, 1.0).astype("float32")
 
     # Build the zero matrix: N output channels, one carries the signal.
     n_frames = data.shape[0]
