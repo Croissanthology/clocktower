@@ -237,6 +237,9 @@ function micNumber(s) { s = String(s).toLowerCase(); return NUMS[s] || (+s || 0)
 function handleHeard(mic, text) {
   const t = String(text).trim(); if (!t) return;
   const lower = t.toLowerCase();
+  // the wrangler's spoken commands: "this is margot. reset." / "this is margot. skip."
+  if (/this is (margot|margo|margaux|marco)[,.!]?\s*(reset|restart|start over)/.test(lower)) { ctxAppend({ kind: 'phase', text: 'margot said reset' }); log('room', { voiceCommand: 'reset', text: t }); resetRoom(); return; }
+  if (/this is (margot|margo|margaux|marco)[,.!]?\s*(skip|next stage|move on)/.test(lower)) { ctxAppend({ kind: 'phase', text: 'margot said skip' }); log('room', { voiceCommand: 'skip', text: t }); if (state.stage === 'idle') resetRoom(); else { state.queue = []; if (speakChild) try { speakChild.kill('SIGKILL'); } catch (e) {} state.speaking = null; advance(); } return; }
   // setup mode: "mic one" / "microphone 3" / "this is mic seven"
   const m1 = lower.match(/\b(?:mic|mike|microphone)\s*(?:number\s*)?(\d|one|two|three|four|five|six|seven|eight)\b/);
   // registration: "hi I'm Kate on mic 3" / "Kate, mic seven" / "my name is Perry, microphone two"
