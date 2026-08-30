@@ -48,6 +48,7 @@
     font-size:clamp(28px, 4.2vw, 52px); line-height:1.35; color:var(--ink); text-shadow:0 0 22px hsl(var(--hue) 70% 60% / .5), 0 2px 0 #000; padding:2vh 0; }
   #stage { display:flex; } #feed { display:none; }
   body.transcript #feed { display:block; } body.transcript #stage { display:none; }
+  body.dim #stage { display:none; }   /* a creature that is not on chills: name and smoke, nothing else */
   .line.heard.bright { color:var(--ink); font-size:24px; font-style:normal; }
   #stage .w { opacity:0; display:inline-block; margin-right:.28em; transform:translateY(6px); transition:opacity .35s, transform .35s; }
   #stage .w.on { opacity:1; transform:none; }
@@ -108,7 +109,7 @@ async function poll(){
     if(lastMine && lastMine.ts!==lastSayTs){ lastSayTs=lastMine.ts; justSpoke=true; }
     if(S.ctx.length!==lastLen){
       lastLen=S.ctx.length; const f=document.getElementById('feed'); const items=S.ctx.slice(-40);
-      f.innerHTML = items.map((e,i)=>{
+      f.innerHTML = items.filter(e=>!document.body.classList.contains('transcript') || e.kind==='heard').map((e,i)=>{ /* MICS_ONLY on the transcript screen */
         const fresh = i>=items.length-2;
         if(e.kind==='heard') return `<p class="line heard">${esc(e.who)}: ${esc(e.text)}</p>`;
         if(e.kind==='say'){ const isMe = me && e.player===me.name; return `<p class="line creature ${isMe?'':'other'}"><b>${esc(e.player)}</b>${fresh&&isMe?letters(e.text):esc(e.text)}</p>`; }
