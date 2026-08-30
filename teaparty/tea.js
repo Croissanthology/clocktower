@@ -113,7 +113,7 @@ function pump() {
   const q = state.queue[0];
   if (!q.file) { if (!synthBusy) { synthBusy = true; synthToFile(q.voice, q.text, path.join(RUN, `line-${q.id}.wav`), (err, f) => { synthBusy = false; if (err) state.queue.shift(); else q.file = f; save(); }); } return; }
   state.queue.shift();
-  state.speaking = { player: q.name, text: q.text }; save();
+  state.speaking = { player: q.name, text: q.text }; state.speakingSince = Date.now(); save();
   ctxAppend({ kind: 'say', player: q.name, text: q.text });
   checkCreatureSaid(q.name, q.text);
   const after = () => { state.speaking = null; speakEndedAt = Date.now(); if (q.then) setStage(q.then); else if (state.pendingAdvance && !state.queue.length) { const st = state.pendingAdvance; state.pendingAdvance = null; setStage(st); } save(); };
@@ -283,6 +283,7 @@ setInterval(() => {
   if (state.running && !state.paused && Date.now() - (state.lastTick || 0) > 18000) { state.lastTick = Date.now(); tick(); }
 }, 1000);
 setInterval(() => { for (const c of state.chars) if (c.status === 'thinking' && Date.now() - c.thinkingSince > 120000) c.status = 'idle'; }, 5000);
+setInterval(() => { if (state.speaking && Date.now() - (state.speakingSince || 0) > 45000) { log('player', { hung: state.speaking }); if (speakChild) try { speakChild.kill('SIGKILL'); } catch (e) {} execFile('pkill', ['-9', '-f', 'audio/play_chan' + 'nel.py'], () => {}); state.speaking = null; speakEndedAt = Date.now(); save(); } }, 3000);
 
 // ---------------- http ----------------
 function body(req) { return new Promise(res => { let d = ''; req.on('data', c => d += c); req.on('end', () => { try { res(JSON.parse(d || '{}')); } catch (e) { res({}); } }); }); }
@@ -293,6 +294,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET') {
     if (url.pathname === '/' || url.pathname === '/index.html') return page(res, 'tea.html');
     if (url.pathname === '/seat') return page(res, 'seat.html');
+    if (url.pathname === '/transcript') return page(res, 'transcript.html');
     if (url.pathname === '/door') return page(res, 'door.html');
     if (url.pathname === '/mics') return page(res, 'mics.html');
     if (url.pathname === '/api/state') return send(200, { ...state, room, ctx: state.ctx.slice(-200), cfg: { targetWord: cfg.targetWord, characters: cfg.characters.map(c => ({ name: c.name, channel: c.channel, hue: c.hue, engine: c.engine })) } });
