@@ -77,9 +77,9 @@ let speakChild = null, speakEndedAt = 0;
 function playFile(file, channel, done) {
   const finish = () => { speakChild = null; done(); };
   if (process.env.CT_AUDIO_DEVICE && fs.existsSync(PC))
-    speakChild = execFile(fs.existsSync(PY) ? PY : 'python3', [PC, '--device', process.env.CT_AUDIO_DEVICE, '--channel', String(channel), '--rate', String(state.rate), '--gain', String(state.volume), file], { timeout: 60000 },
-      (err) => { if (err) { speakChild = execFile('afplay', [file], { timeout: 60000 }, finish); return; } finish(); });
-  else speakChild = execFile('afplay', [file], { timeout: 60000 }, finish);
+    speakChild = execFile(fs.existsSync(PY) ? PY : 'python3', [PC, '--device', process.env.CT_AUDIO_DEVICE, '--channel', String(channel), '--rate', String(state.rate), '--gain', String(state.volume), file], { timeout: 60000, killSignal: 'SIGKILL' },
+      (err) => { if (err) { speakChild = execFile('afplay', [file], { timeout: 60000, killSignal: 'SIGKILL' }, finish); return; } finish(); });
+  else speakChild = execFile('afplay', [file], { timeout: 60000, killSignal: 'SIGKILL' }, finish);
 }
 function synthToFile(voice, text, outfile, cb) {
   execFile(SYNTH, [voice, outfile, text], { timeout: 90000 }, (err) => {

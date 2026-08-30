@@ -600,11 +600,11 @@ function playFile(file, channel, done) {
     speakChild = execFile(fs.existsSync(py) ? py : 'python3',
       [pc, '--device', process.env.CT_AUDIO_DEVICE, '--channel', String(channel), '--rate', playRate(), '--gain', String(state.volume), file],
       { timeout: 60000 }, (err) => {
-        if (err) { speakChild = execFile('afplay', ['-r', playRate(), '-v', String(state.volume), file], { timeout: 60000 }, finish); return; }
+        if (err) { speakChild = execFile('afplay', ['-r', playRate(), '-v', String(state.volume), file], { timeout: 60000, killSignal: 'SIGKILL' }, finish); return; }
         finish();
       });
   } else {
-    speakChild = execFile('afplay', ['-r', playRate(), '-v', String(state.volume), file], { timeout: 60000 }, finish);
+    speakChild = execFile('afplay', ['-r', playRate(), '-v', String(state.volume), file], { timeout: 60000, killSignal: 'SIGKILL' }, finish);
   }
 }
 
