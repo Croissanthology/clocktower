@@ -90,7 +90,7 @@ function reveal(text, rate){
   st.className = words.length > 55 ? 'long' : '';   // long speeches: all visible at once, smaller; words brighten as spoken
   st.innerHTML=words.map(w=>`<span class="w">${esc(w)}</span>`).join('');
   const per = (60/150)/(rate||1)*1000; let i=0;
-  setTimeout(()=>{ revealTimer=setInterval(()=>{ const el=st.children[i]; if(!el){ clearInterval(revealTimer); return; } el.classList.add('on'); el.scrollIntoView({block:'nearest'}); i++; }, per); }, 1400);
+  setTimeout(()=>{ revealTimer=setInterval(()=>{ const el=st.children[i]; if(!el){ clearInterval(revealTimer); return; } el.classList.add('on'); el.scrollIntoView({block:'nearest'}); i++; }, per); }, 3200);
 }
 async function poll(){
   try{
