@@ -105,7 +105,31 @@ function playFile(file, channel, done) {
       (err) => { if (err) { speakChild = execFile('afplay', [file], { timeout: 60000, killSignal: 'SIGKILL' }, finish); return; } finish(); });
   else speakChild = execFile('afplay', [file], { timeout: 60000, killSignal: 'SIGKILL' }, finish);
 }
+const PAUSE_S = +process.env.TEA_PAUSE || 0.65;
+// sentence by sentence, with a breath of silence between — synth engines otherwise run everything together
 function synthToFile(voice, text, outfile, cb) {
+  const sents = (String(text).match(/[^.!?…]+[.!?…]+["')]?|[^.!?…]+$/g) || [String(text)]).map(x => x.trim()).filter(Boolean);
+  if (sents.length < 2 || voice === 'eerie') return synthOne(voice, text, outfile, cb);
+  const parts = []; let i = 0;
+  const next = () => {
+    if (i >= sents.length) {
+      const list = path.join(RUN, path.basename(outfile) + '.txt');
+      const silence = path.join(RUN, 'silence.wav');
+      const mk = fs.existsSync(silence) ? Promise.resolve() : new Promise(r => execFile('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'lavfi', '-i', 'anullsrc=r=24000:cl=mono', '-t', String(PAUSE_S), silence], () => r()));
+      return mk.then(() => {
+        fs.writeFileSync(list, parts.flatMap(f => [`file '${f}'`, `file '${silence}'`]).slice(0, -1).join('\n'));
+        execFile('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list, '-ar', '24000', '-ac', '1', outfile], (err) => {
+          if (err) return synthOne(voice, text, outfile, cb);
+          cb(null, outfile);
+        });
+      });
+    }
+    const part = outfile.replace(/\.wav$/, `-s${i}.wav`);
+    synthOne(voice, sents[i], part, (err, f) => { if (!err) parts.push(f); i++; next(); });
+  };
+  next();
+}
+function synthOne(voice, text, outfile, cb) {
   execFile(SYNTH, [voice, outfile, text], { timeout: 90000 }, (err) => {
     if (!err) return cb(null, outfile);
     const aiff = outfile.replace(/\.wav$/, '.aiff');
