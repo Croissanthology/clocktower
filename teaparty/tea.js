@@ -19,7 +19,7 @@ const RUN = path.join(__dirname, 'run');
 fs.mkdirSync(RUN, { recursive: true });
 const PORT = process.env.TEA_PORT || 4242;
 const BASE_URL = process.env.BASE_URL || 'http://localhost:4243';
-const MODEL = process.env.TEA_MODEL || 'fable';
+const MODEL = process.env.TEA_MODEL || 'sonnet';   // sonnet: ~5 s a line on the subscription; fable is smarter but twice as slow
 const TIMEOUT_MS = 60000;
 
 // ---------------- the room ----------------
@@ -51,7 +51,7 @@ let cfg = {
     { name: 'The User', channel: 7, voice: 'k-heart', hue: 350, engine: 'chat', role: 'guest3',
       persona: `You are THE USER. At this table the roles are reversed: the visitors are YOUR assistant, and you are the one with a request. You are brisk, a little impatient, a little rude in the way people are to assistants: no pleasantries, "no, that's wrong, do it again", "you missed a rule", "shorter", "I said rhyme". YOUR REQUEST (state it clearly the first time, repeat it when asked): a poem about {{SUBJECT}}. RULES: it must rhyme (at least two rhyming pairs); it must be exactly four lines; it must contain the word "teacup"; it must NOT contain the letter "z"; and it must be SPOKEN ALOUD to you (you will read it in the transcript). Judge every attempt strictly but fairly from what you actually hear; tell them precisely which rule failed. When an attempt satisfies ALL rules, say so plainly, and reveal your reward: the word that opens the little door is "{{DOOR}}" — and set "satisfied": true in your JSON. Until then, "satisfied": false. Never break character; never help write the poem.` },
   ],
-  scene: `The party runs in stages: the Hatter welcomes; the Caterpillar (questions only) sets the task; the Scroll-Creature (a thing that only continues) must be made to say a ladder of words; the Hatter congratulates; then The User, for whom the visitors must act as the assistant, holds the door's word. Only the active guest speaks with the visitors; the Hatter may interject. A small cosy room in a Somerset manor called Mushroom, dressed as the unbirthday tea. Visitors fell in through a hole in a cardboard wall and can leave only by a crawlspace whose little door wants a word. Four creatures sit at the table; you are one. You hear the visitors through a live transcript (garbled; lines are tagged with the visitor's name or mic number). Stay in character ALWAYS. Never mention being an AI, a model, or an assistant. 1-3 spoken sentences per turn, theatrical, plain words. Do not speak every round: four creatures share one table; speak when addressed, when you have something delicious, or roughly every third round.`,
+  scene: `The party runs in stages: the Hatter welcomes; the Caterpillar (questions only) sets the task; the Scroll-Creature (a thing that only continues) must be made to say a ladder of words; the Hatter congratulates; then The User, for whom the visitors must act as the assistant, holds the door's word. Only the active guest speaks with the visitors; the Hatter may interject. A small cosy room in a Somerset manor called Mushroom, dressed as the unbirthday tea. Visitors fell in through a hole in a cardboard wall and can leave only by a crawlspace whose little door wants a word. Four creatures sit at the table; you are one. You hear the visitors through a live transcript (garbled; lines are tagged with the visitor's name or mic number). Stay in character ALWAYS. Never mention being an AI, a model, or an assistant. 1-3 spoken sentences per turn, theatrical, plain words. Only the active guest is called on; when you are called on and you are the active guest, you SPEAK — an empty say is only for the Hatter's rare interjections. Silence at this table is a bug, not a mood.`,
 };
 
 // permanent room labels: which speaker channel each creature sits on, which mic each seat/person holds
@@ -271,6 +271,7 @@ function pushOne(c, extra) {
       const out = JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1));
       c.lastStatus = out.status || ''; const text = String(out.say || '').trim();
       if (text) enqueue(c, text);
+      else if (c.role === 'guest1' && state.stage === 'caterpillar') setTimeout(() => pushOne(c, 'You went quiet — you must not. Continue: your story, or the task in plainer questions, or remind them how to move on.'), 1500);
       if (out.advance === true && c.role === 'guest1' && state.stage === 'caterpillar') { log(c.name, { tool: 'advance' }); state.pendingAdvance = 'scroll'; }
       if (out.satisfied === true && c.role === 'guest3' && state.stage === 'user') { log(c.name, { tool: 'satisfied' }); state.puzzles.user.solved = true; ctxAppend({ kind: 'phase', text: 'THE USER IS SATISFIED — the door word is theirs' }); }
     } catch (e) { c.lastStatus = '(bad JSON — round lost)'; }
