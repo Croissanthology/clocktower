@@ -86,7 +86,11 @@ async function poll(){
       const speakingMe = S.speaking && S.speaking.player===me.name;
       const isActive = S.active===me.name || speakingMe;
       document.body.className = cls + (isActive ? ' active' : ' dim') + (justSpoke ? ' flash' : ''); justSpoke=false;
-      if (speakingMe && S.speaking.text!==revealText) reveal(S.speaking.text, S.rate||0.95); }
+      if (speakingMe && S.speaking.text!==revealText) reveal(S.speaking.text, S.rate||0.95);
+      else if (!speakingMe && isActive) { // between lines: keep the last thing it said on screen, fully shown
+        const mine=S.ctx.filter(e=>e.kind==='say'&&e.player===me.name); const last=mine[mine.length-1];
+        if(last && last.text!==revealText){ revealText=last.text; clearInterval(revealTimer); document.getElementById('stage').innerHTML=last.text.split(/\s+/).map(w=>`<span class="w on">${esc(w)}</span>`).join(''); }
+        if(!last && !document.getElementById('stage').innerHTML) document.getElementById('stage').innerHTML=`<span class="w on" style="color:hsl(var(--hue) 40% 60%)">…</span>`; } }
     const mine = S.chars[n-1]; document.getElementById('think').className = mine && mine.status==='thinking' ? 'on' : '';
     const mineSays = S.ctx.filter(e=>e.kind==='say' && me && e.player===me.name); const lastMine = mineSays[mineSays.length-1];
     if(lastMine && lastMine.ts!==lastSayTs){ lastSayTs=lastMine.ts; justSpoke=true; }
