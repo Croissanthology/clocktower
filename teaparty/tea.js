@@ -174,7 +174,7 @@ let synthBusy = false;
 function pump() {
   if (state.paused || state.speaking || !state.queue.length) return;
   const q = state.queue.find(x => !x.hold || x.hold === state.stage); if (!q) return;
-  if (!q.file) { if (!synthBusy) { synthBusy = true; synthToFile(q.voice, q.text, path.join(RUN, `line-${q.id}.wav`), (err, f) => { synthBusy = false; if (err) state.queue.shift(); else q.file = f; save(); }); } return; }
+  if (!q.file) { if (!synthBusy) { synthBusy = true; synthToFile(q.voice, q.text, path.join(RUN, `line-${q.id}.wav`), (err, f) => { synthBusy = false; if (err) { log('player', { synthFailed: q.text.slice(0, 80) }); state.queue.splice(state.queue.indexOf(q), 1); if (q.then) setStage(q.then); } else q.file = f; save(); }); } return; }
   state.queue.splice(state.queue.indexOf(q), 1);
   state.speaking = { id: q.id, player: q.name, text: q.text }; state.speakingSince = Date.now(); lastSpoken = q.text; save();
   ctxAppend({ kind: 'say', player: q.name, text: q.text });
