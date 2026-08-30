@@ -68,6 +68,7 @@ function resetChars() { applyRoom(); state.chars = cfg.characters.map(c => ({ na
 const STAGES = ['idle', 'welcome', 'caterpillar', 'scroll', 'congrats', 'user', 'open'];
 const SUBJECTS = ['a lost umbrella', 'the Queen of Hearts\' bad haircut', 'a clock that runs backwards', 'the smell of old books', 'a very tired rabbit', 'a teapot that has seen things', 'the crawlspace behind the red curtain', 'a mushroom with ambitions', 'Somerset in the rain', 'a cat that is mostly grin'];
 const HATTER_WELCOME = `Welcome to my tea party! You will find that leaving will be... quite difficult. You may not come out the way you came in. Why would anyone do that? It is a silly notion. You cannot cross the same place twice, after all. But before I tell you how to exit this room, why not have some tea with us? I'm sure I'll be more... inclined... to let you go if you enjoy your stay at our table. And, of course, solve the most delightful puzzle. Puzzling, puzzling... ah yes! The caterpillar has something to say to you. Pay close attention... and when you have had enough of him, you must ask him, politely, to bring you to the next guest.`;
+const HATTER_FAREWELL = `Well! She is satisfied, and I have never once seen her satisfied. Then the tea is over, and you may leave — not the way you came, never the way you came. The little door is behind the red curtain; it remembers you now. Crawl, my dears. Mind your heads. And do come back when it is later.`;
 const HATTER_CONGRATS = `Ding, ding, ding! The last word is drawn, and none of you spoke it — how deliciously done. One guest remains, and she is... different. She does not answer. She ASKS. Tonight, you are the ones who must be helpful. Do exactly as she says, and the door is yours.`;
 const crypto = require('crypto');
 const pre = {};
@@ -77,7 +78,16 @@ function prerender(text, voice) {
   if (fs.existsSync(out)) { pre[text] = out; console.log('pre-rendered (cached)', key); return; }
   synthToFile(voice, text, out, (err, f) => { if (!err) { pre[text] = f; console.log('pre-rendered', key); } });
 }
-setTimeout(() => { const h = cfg.characters.find(c => c.role === 'host'); prerender(HATTER_WELCOME, h.voice); prerender(HATTER_CONGRATS, h.voice); }, 1500);
+setTimeout(() => { const h = cfg.characters.find(c => c.role === 'host'); prerender(HATTER_WELCOME, h.voice); prerender(HATTER_CONGRATS, h.voice); prerender(HATTER_FAREWELL, h.voice); }, 1500);
+function exportSession() {
+  const dir = path.join(process.env.HOME, 'Desktop', 'mushroom-room'); fs.mkdirSync(dir, { recursive: true });
+  const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
+  const lines = state.ctx.map(e => { const t = new Date(e.ts).toTimeString().slice(0, 8);
+    if (e.kind === 'heard') return `[${t}] ${e.who}: ${e.text}`; if (e.kind === 'say') return `[${t}] **${e.player}**: ${e.text}`; return `[${t}] — ${e.text} —`; });
+  const md = `# the mushroom room — ${stamp}\n\nvisitors on mics: ${Object.entries(state.mics).map(([k, v]) => `${v.name} (mic ${k})`).join(', ') || 'unnamed'}\nladder: ${state.ladder.map(r => `${r.word}${r.solved ? ' ✓' : ''}`).join(' → ')}\npoem subject: ${state.subject || '-'}\ndoor attempts: ${state.door.attempts.map(a => `"${a.word}"${a.ok ? ' ✓' : ''}`).join(', ') || 'none'}\n\n${lines.join('\n')}\n`;
+  const f = path.join(dir, `session-${stamp}.md`); fs.writeFileSync(f, md); console.log('session saved', f); return f;
+}
+function resetRoom() { state.running = true; state.paused = false; state.ctx = []; state.queue = []; state.turnN = 0; lastHeardCount = 0; state.mics = {}; state.door = { open: false, attempts: [] }; state.base.text = ''; resetChars(); resetPuzzles(); state.lastTick = 0; state.stage = 'idle'; state.active = null; state.pendingAdvance = null; state.subject = null; state.savedTo = null; save(); }
 function activeName() { return { caterpillar: 'Caterpillar', scroll: 'Scroll-Creature', user: 'The User' }[state.stage] || null; }
 function setStage(st) {
   state.stage = st; state.stageSince = Date.now(); state.active = activeName();
@@ -85,6 +95,7 @@ function setStage(st) {
   const hatter = state.chars.find(c => c.role === 'host');
   if (st === 'welcome') { const cat = state.chars.find(x => x.role === 'guest1'); setTimeout(() => pushOne(cat, 'The Hatter is finishing his welcome; in a moment he hands the table to you. Prepare your OPENING: "Whooo... are... yooou?" and the start of your little story, in questions only.'), 500); const CH = path.join(ROOT, 'audio', 'sfx', 'teacup.wav'); if (fs.existsSync(CH)) execFile(fs.existsSync(PY) ? PY : 'python3', [PC, '--device', process.env.CT_AUDIO_DEVICE || 'MacBook Air Speakers', '--channel', '1', '--gain', '1', CH], { timeout: 10000 }, () => {}); enqueue(hatter, HATTER_WELCOME, { full: true }); state.queue[state.queue.length - 1].then = 'caterpillar'; }
   if (st === 'congrats') { enqueue(hatter, HATTER_CONGRATS, { full: true }); state.queue[state.queue.length - 1].then = 'user'; }
+  if (st === 'open') { state.savedTo = exportSession(); state.active = null; setTimeout(() => { if (state.stage === 'open') resetRoom(); }, 180000); }
   if (st === 'caterpillar') { const c = state.chars.find(x => x.role === 'guest1'); if (!state.queue.some(q => q.name === c.name)) pushOne(c, 'You have just been introduced by the Hatter. Greet the visitors and begin winding your little story about yourself — in questions only.'); }
   if (st === 'user') { if (!state.subject) state.subject = SUBJECTS[Math.floor(Math.random() * SUBJECTS.length)]; const c = state.chars.find(x => x.role === 'guest3'); pushOne(c, 'You have just been introduced. State your request and all its rules, briskly, as if to an assistant.'); }
   save();
@@ -304,7 +315,11 @@ function pushOne(c, extra) {
       else if (c.role === 'guest1' && state.stage === 'caterpillar') setTimeout(() => pushOne(c, 'You went quiet — you must not. Continue: your story, or the task in plainer questions, or remind them how to move on.'), 1500);
       if (out.advance === true && c.role === 'guest1' && state.stage === 'caterpillar') { log(c.name, { tool: 'advance' }); state.pendingAdvance = 'scroll'; }
       if (state.pendingAdvance) state.queue = state.queue.filter(q => q.name !== c.name || q.id <= (state.speaking && state.speaking.id) || false);
-      if (out.satisfied === true && c.role === 'guest3' && state.stage === 'user') { log(c.name, { tool: 'satisfied' }); state.puzzles.user.solved = true; ctxAppend({ kind: 'phase', text: 'THE USER IS SATISFIED — the door word is theirs' }); }
+      if (out.satisfied === true && c.role === 'guest3' && state.stage === 'user') {
+        log(c.name, { tool: 'satisfied' }); state.puzzles.user.solved = true; ctxAppend({ kind: 'phase', text: 'THE USER IS SATISFIED — the tea is over' });
+        const hatter = state.chars.find(x => x.role === 'host');
+        enqueue(hatter, HATTER_FAREWELL, { full: true }); state.queue[state.queue.length - 1].then = 'open';
+      }
     } catch (e) { c.lastStatus = '(bad JSON — round lost)'; }
     save();
   });
@@ -381,13 +396,14 @@ const server = http.createServer(async (req, res) => {
     handleHeard(+b.mic || 0, b.text); return send(200, { ok: true });
   }
   if (req.method === 'POST' && url.pathname === '/api/miclevels') { const b = await body(req); state.micLevels = b.levels || []; state.micSpeech = b.speech_ago || []; state.micTs = Date.now(); return send(200, { ok: true }); }
-  if (req.method === 'POST' && url.pathname === '/api/start') { state.running = true; state.paused = false; state.ctx = []; state.queue = []; state.turnN = 0; lastHeardCount = 0; state.mics = {}; state.door = { open: false, attempts: [] }; state.base.text = ''; resetChars(); resetPuzzles(); state.lastTick = 0; state.stage = 'idle'; state.active = null; state.pendingAdvance = null; state.subject = null; save(); return send(200, { ok: true }); }
+  if (req.method === 'POST' && url.pathname === '/api/start') { resetRoom(); return send(200, { ok: true }); }
   if (req.method === 'POST' && url.pathname === '/api/flush') { state.queue = []; if (speakChild) try { speakChild.kill('SIGKILL'); } catch (e) {} state.speaking = null; save(); return send(200, { ok: true }); }
   if (req.method === 'POST' && url.pathname === '/api/advance') {
     const b = await body(req); if (!state.running) { state.running = true; state.paused = false; }
     if (b.stage && STAGES.includes(b.stage)) setStage(b.stage);
     else if (b.skip) advance();
     else if ((state.stage || 'idle') === 'idle') advance();          // space: starts the series once; later presses are ignored
+    else if (state.stage === 'open') resetRoom();                     // space after the farewell: the room reloads for the next group
     return send(200, { stage: state.stage, active: state.active });
   }
   if (req.method === 'POST' && url.pathname === '/api/pause') { const b = await body(req); state.paused = b.paused !== undefined ? !!b.paused : !state.paused; if (state.paused && speakChild) try { speakChild.kill('SIGKILL'); } catch (e) {} save(); return send(200, { paused: state.paused }); }
