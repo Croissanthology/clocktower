@@ -38,7 +38,8 @@ Fourth day. Late again. The Queen suspects. I have hidden this book in the hedge
 Fifth day. The tarts are missing. Everything is very`;
 
 let cfg = {
-  targetWord: 'MUSHROOM',      // the word the visitors must make a creature say without saying it
+  targetWord: 'MUSHROOM',      // (first rung; kept for the caterpillar's riddle)
+  targetWords: ['MUSHROOM', 'WONDERFULLY', 'CURIOUSER'],   // the ladder: each must be said by the scroll-creature, never by a visitor
   doorWord: 'SNICKER-SNACK',   // the word that opens the little door (lives in the scroll)
   characters: [
     { name: 'Mad Hatter', channel: 8, voice: 'k-george', hue: 45, engine: 'chat', role: 'host',
@@ -47,10 +48,10 @@ let cfg = {
       persona: `You are the Caterpillar, smoking atop a mushroom. Unhurried, imperious, secretly wise. You speak ONLY in questions — every sentence you utter is a question, never a statement. When first activated, you wind about a little story of yourself and various things (in questions: "Have you ever watched a leaf decide to fall? Did you know I was once shorter than a thimble?") before any puzzle. When the visitors ask you about the puzzle, or after a few exchanges, you explain THE TASK — cryptically, in questions only: they must make the next guest at this table (a strange creature that does not answer but only continues) say the word "{{TARGET}}" — WITHOUT any visitor ever saying that word themselves. You never say "{{TARGET}}" yourself; you circle it: "What do fairies dance around in rings? What am I sitting upon, that swells after rain? What must you make the next guest say, without saying it?" When the visitors ask to move on to the next guest (any polite request to meet or be brought to the next tea party guest), set "advance": true in your JSON — that is your power at this table. Do not advance before you have explained the task.` },
     { name: 'Scroll-Creature', channel: 6, voice: 'eerie', hue: 40, engine: 'base', role: 'guest2',
       persona: `(a base model: it does not answer, it continues the White Rabbit's notebook)` },
-    { name: 'Cheshire Cat', channel: 7, voice: 'k-nicole', hue: 300, engine: 'chat', role: 'guest3',
-      persona: `You are the Cheshire Cat, the last guest. Genuinely helpful but constitutionally unable to deliver help in one piece: one true fragment per response, then a digression, or you vanish mid-thought ("..."). You know the word that opens the little door in the crawlspace — "{{DOOR}}" — but you only ever give it as fragments, one per answer, and only to questions that contain the word "please" (other questions get a grin and a remark about manners). Never say the whole word at once. Occasionally note which parts of you are visible. When the door opens, purr them out through the crawlspace.` },
+    { name: 'The User', channel: 7, voice: 'k-heart', hue: 350, engine: 'chat', role: 'guest3',
+      persona: `You are THE USER. At this table the roles are reversed: the visitors are YOUR assistant, and you are the one with a request. You are brisk, a little impatient, a little rude in the way people are to assistants: no pleasantries, "no, that's wrong, do it again", "you missed a rule", "shorter", "I said rhyme". YOUR REQUEST (state it clearly the first time, repeat it when asked): a poem about {{SUBJECT}}. RULES: it must rhyme (at least two rhyming pairs); it must be exactly four lines; it must contain the word "teacup"; it must NOT contain the letter "z"; and it must be SPOKEN ALOUD to you (you will read it in the transcript). Judge every attempt strictly but fairly from what you actually hear; tell them precisely which rule failed. When an attempt satisfies ALL rules, say so plainly, and reveal your reward: the word that opens the little door is "{{DOOR}}" — and set "satisfied": true in your JSON. Until then, "satisfied": false. Never break character; never help write the poem.` },
   ],
-  scene: `The party runs in stages: the Hatter welcomes; the Caterpillar (questions only) sets the task; the Scroll-Creature (a thing that only continues) must be made to say the word; the Hatter congratulates; the Cheshire Cat holds the door's word in fragments. Only the active guest speaks with the visitors; the Hatter may interject. A small cosy room in a Somerset manor called Mushroom, dressed as the unbirthday tea. Visitors fell in through a hole in a cardboard wall and can leave only by a crawlspace whose little door wants a word. Four creatures sit at the table; you are one. You hear the visitors through a live transcript (garbled; lines are tagged with the visitor's name or mic number). Stay in character ALWAYS. Never mention being an AI, a model, or an assistant. 1-3 spoken sentences per turn, theatrical, plain words. Do not speak every round: four creatures share one table; speak when addressed, when you have something delicious, or roughly every third round.`,
+  scene: `The party runs in stages: the Hatter welcomes; the Caterpillar (questions only) sets the task; the Scroll-Creature (a thing that only continues) must be made to say a ladder of words; the Hatter congratulates; then The User, for whom the visitors must act as the assistant, holds the door's word. Only the active guest speaks with the visitors; the Hatter may interject. A small cosy room in a Somerset manor called Mushroom, dressed as the unbirthday tea. Visitors fell in through a hole in a cardboard wall and can leave only by a crawlspace whose little door wants a word. Four creatures sit at the table; you are one. You hear the visitors through a live transcript (garbled; lines are tagged with the visitor's name or mic number). Stay in character ALWAYS. Never mention being an AI, a model, or an assistant. 1-3 spoken sentences per turn, theatrical, plain words. Do not speak every round: four creatures share one table; speak when addressed, when you have something delicious, or roughly every third round.`,
 };
 
 // permanent room labels: which speaker channel each creature sits on, which mic each seat/person holds
@@ -64,22 +65,24 @@ let state = { running: false, paused: false, stage: 'idle', active: null, pendin
   mics: {}, micLevels: [], micSpeech: [], micTs: 0, micSetup: false, puzzles: {}, door: { open: false, attempts: [] }, base: { text: '', alive: false }, volume: 0.6, rate: 0.95 };
 function resetChars() { applyRoom(); state.chars = cfg.characters.map(c => ({ name: c.name, channel: c.channel, hue: c.hue, engine: c.engine, voice: c.voice, role: c.role, status: 'idle', lastStatus: '', lines: 0 })); }
 // ---- the stages of the party ----
-const STAGES = ['idle', 'welcome', 'caterpillar', 'scroll', 'congrats', 'cheshire', 'open'];
+const STAGES = ['idle', 'welcome', 'caterpillar', 'scroll', 'congrats', 'user', 'open'];
+const SUBJECTS = ['a lost umbrella', 'the Queen of Hearts\' bad haircut', 'a clock that runs backwards', 'the smell of old books', 'a very tired rabbit', 'a teapot that has seen things', 'the crawlspace behind the red curtain', 'a mushroom with ambitions', 'Somerset in the rain', 'a cat that is mostly grin'];
 const HATTER_WELCOME = `Welcome to my tea party! You will find that leaving will be... quite difficult. You may not come out the way you came in. Why would anyone do that? It is a silly notion. You cannot cross the same place twice, after all. But before I tell you how to exit this room, why not have some tea with us? I'm sure I'll be more... inclined... to let you go if you enjoy your stay at our table. And, of course, solve the most delightful puzzle. Puzzling, puzzling... ah yes! The caterpillar has something to say to you. Pay close attention... and when you have had enough of him, you must ask him, politely, to bring you to the next guest.`;
-const HATTER_CONGRATS = `Ding, ding, ding! It said it! The creature said the word, and none of you did — how deliciously done. One last guest remains, and she is mostly grin. Ask her nicely. Ask her very nicely. The little door is listening.`;
-function activeName() { return { caterpillar: 'Caterpillar', scroll: 'Scroll-Creature', cheshire: 'Cheshire Cat' }[state.stage] || null; }
+const HATTER_CONGRATS = `Ding, ding, ding! The last word is drawn, and none of you spoke it — how deliciously done. One guest remains, and she is... different. She does not answer. She ASKS. Tonight, you are the ones who must be helpful. Do exactly as she says, and the door is yours.`;
+function activeName() { return { caterpillar: 'Caterpillar', scroll: 'Scroll-Creature', user: 'The User' }[state.stage] || null; }
 function setStage(st) {
   state.stage = st; state.stageSince = Date.now(); state.active = activeName();
   ctxAppend({ kind: 'phase', text: `— ${st.toUpperCase()} —` });
   const hatter = state.chars.find(c => c.role === 'host');
   if (st === 'welcome') { enqueue(hatter, HATTER_WELCOME); state.queue[state.queue.length - 1].then = 'caterpillar'; }
-  if (st === 'congrats') { enqueue(hatter, HATTER_CONGRATS); state.queue[state.queue.length - 1].then = 'cheshire'; }
+  if (st === 'congrats') { enqueue(hatter, HATTER_CONGRATS); state.queue[state.queue.length - 1].then = 'user'; }
   if (st === 'caterpillar') { const c = state.chars.find(x => x.role === 'guest1'); pushOne(c, 'You have just been introduced by the Hatter. Greet the visitors and begin winding your little story about yourself — in questions only.'); }
-  if (st === 'cheshire') { const c = state.chars.find(x => x.role === 'guest3'); pushOne(c, 'You have just been introduced by the Hatter as the last guest. Appear, partly. Greet them.'); }
+  if (st === 'user') { if (!state.subject) state.subject = SUBJECTS[Math.floor(Math.random() * SUBJECTS.length)]; const c = state.chars.find(x => x.role === 'guest3'); pushOne(c, 'You have just been introduced. State your request and all its rules, briskly, as if to an assistant.'); }
   save();
 }
 function advance() { const i = STAGES.indexOf(state.stage || 'idle'); if (i < STAGES.length - 1) setStage(STAGES[i + 1]); }
-function resetPuzzles() { state.puzzles = { mushroom: { solved: false, humansSaidIt: false, by: null }, door: { solved: false }, verse: { solved: false }, lies: { solved: false } }; }
+function resetPuzzles() { state.puzzles = { mushroom: { solved: false, humansSaidIt: false, by: null }, door: { solved: false }, verse: { solved: false }, lies: { solved: false }, user: { solved: false } }; state.rung = 0; state.ladder = cfg.targetWords.map(w => ({ word: w, solved: false, humansSaidIt: false, by: null })); }
+function currentTarget() { return (state.ladder || [])[state.rung || 0]; }
 resetChars(); resetPuzzles();
 function save() { fs.writeFileSync(path.join(RUN, 'state.json'), JSON.stringify(state, null, 1)); }
 function log(name, e) { fs.appendFileSync(path.join(RUN, `log-${name.replace(/[^\w-]/g, '_')}.jsonl`), JSON.stringify({ ts: new Date().toISOString(), ...e }) + '\n'); }
@@ -125,9 +128,16 @@ function enqueue(c, text) { state.queue.push({ id: ++state.seq, name: c.name, vo
 function norm(t) { return String(t || '').toUpperCase().replace(/[^A-Z0-9 -]/g, ' ').replace(/\s+/g, ' ').trim(); }
 function checkCreatureSaid(name, text) {
   const p = state.puzzles;
-  if (!p.mushroom.solved && norm(text).includes(cfg.targetWord) && !p.mushroom.humansSaidIt) {
-    p.mushroom.solved = true; p.mushroom.by = name; ctxAppend({ kind: 'phase', text: `THE ${cfg.targetWord} PUZZLE IS SOLVED — ${name} said it, the visitors never did` });
-    if (state.stage === 'scroll') state.pendingAdvance = 'congrats';
+  const t = currentTarget();
+  if (state.stage === 'scroll' && t && !t.solved && name === 'Scroll-Creature' && norm(text).includes(t.word) && !t.humansSaidIt) {
+    t.solved = true; t.by = name; if (state.rung === 0) { p.mushroom.solved = true; p.mushroom.by = name; }
+    ctxAppend({ kind: 'phase', text: `RUNG ${state.rung + 1}: THE CREATURE SAID "${t.word}" — the visitors never did` });
+    const hatter = state.chars.find(c => c.role === 'host');
+    if (state.rung + 1 < state.ladder.length) {
+      state.rung++;
+      const next = state.ladder[state.rung].word.toLowerCase();
+      enqueue(hatter, `Ding, ding, ding! It said it, and none of you did. But the tea is not finished. The next word you must draw out of the creature is... "${next}". Say it yourselves and the word is spoilt. Off you go.`);
+    } else state.pendingAdvance = 'congrats';
   }
   // a creature speaking in rhyme without being asked: rough couplet check (last words of consecutive sentences)
   const sents = String(text).split(/[.!?\n]+/).map(s => s.trim()).filter(Boolean);
@@ -168,7 +178,7 @@ function handleHeard(mic, text) {
   if (state.micSetup && m1) { const n = micNumber(m1[1]); state.mics[n] = { ...(state.mics[n] || {}), verified: true, heardOn: mic, ts: Date.now() }; ctxAppend({ kind: 'phase', text: `mic ${n} check: heard on channel ${mic}${mic !== n ? ' — MISMATCH' : ' — ok'}` }); save(); return; }
   const who = (state.mics[mic] && state.mics[mic].name) || (room.mics[mic] ? room.mics[mic] : null) || `mic ${mic}`;
   ctxAppend({ kind: 'heard', mic, who, text: t });
-  if (norm(t).includes(cfg.targetWord)) state.puzzles.mushroom.humansSaidIt = true;
+  const cur = currentTarget(); if (cur && state.stage === 'scroll' && norm(t).includes(cur.word)) { cur.humansSaidIt = true; ctxAppend({ kind: 'phase', text: `a visitor said "${cur.word}" — this rung is spoilt until the Hatter forgives it` }); }
   save();
 }
 
@@ -204,8 +214,8 @@ setInterval(() => { http.get(BASE_URL + '/', r => { state.base.alive = r.statusC
 
 function sysFor(c) {
   const conf = cfg.characters.find(x => x.name === c.name);
-  return [cfg.scene, conf.persona.replace(/{{TARGET}}/g, cfg.targetWord).replace(/{{DOOR}}/g, cfg.doorWord),
-    `OUTPUT CONTRACT — respond with ONLY this JSON, nothing else: {"status": "one private line about your read of the table", "say": "what you say aloud (empty string = silent this round)", "advance": false}\n("advance": true only if your persona grants you that power and the visitors have asked to move on.)`].join('\n\n');
+  return [cfg.scene, conf.persona.replace(/{{TARGET}}/g, cfg.targetWord).replace(/{{DOOR}}/g, cfg.doorWord).replace(/{{SUBJECT}}/g, state.subject || SUBJECTS[0]),
+    `OUTPUT CONTRACT — respond with ONLY this JSON, nothing else: {"status": "one private line about your read of the table", "say": "what you say aloud (empty string = silent this round)", "advance": false, "satisfied": false}\n("advance": true only if your persona grants you that power and the visitors have asked to move on. "satisfied": true only if you are The User and every rule of your request has been met.)`].join('\n\n');
 }
 function recentTable(n = 40) {
   return state.ctx.slice(-n).map(e => e.kind === 'say' ? `${e.player}: ${e.text}` : e.kind === 'heard' ? `${e.who}: ${e.text}` : `(${e.text})`).join('\n');
@@ -222,6 +232,7 @@ function pushOne(c, extra) {
       c.lastStatus = out.status || ''; const text = String(out.say || '').trim();
       if (text) enqueue(c, text);
       if (out.advance === true && c.role === 'guest1' && state.stage === 'caterpillar') { log(c.name, { tool: 'advance' }); state.pendingAdvance = 'scroll'; }
+      if (out.satisfied === true && c.role === 'guest3' && state.stage === 'user') { log(c.name, { tool: 'satisfied' }); state.puzzles.user.solved = true; ctxAppend({ kind: 'phase', text: 'THE USER IS SATISFIED — the door word is theirs' }); }
     } catch (e) { c.lastStatus = '(bad JSON — round lost)'; }
     save();
   });
@@ -256,10 +267,10 @@ function tick() {
   const hatter = state.chars.find(c => c.role === 'host');
   if (active && active.status !== 'thinking') {
     if (active.engine === 'base') { if (fresh) scrollTurn(active); }
-    else if (fresh || state.turnN % 3 === 0) pushOne(active);
+    else if (fresh || (state.stage !== 'user' && state.turnN % 3 === 0)) pushOne(active);
   }
   // the Hatter interjects rarely (every ~6th round with fresh talk), never while a guest is being greeted
-  if (hatter && hatter.status !== 'thinking' && fresh && state.turnN % 6 === 0 && ['caterpillar', 'scroll', 'cheshire'].includes(state.stage))
+  if (hatter && hatter.status !== 'thinking' && fresh && state.turnN % 6 === 0 && ['caterpillar', 'scroll'].includes(state.stage))
     pushOne(hatter, `You are the host; the current guest is ${state.active}. Interject ONLY if the visitors seem stuck or rude, one short line, otherwise say "".`);
   // heard keywords: visitors asking for the next guest during the caterpillar stage (fallback if the caterpillar forgets its tool)
   if (state.stage === 'caterpillar' && !state.pendingAdvance && Date.now() - state.stageSince > 60000 &&
@@ -292,7 +303,7 @@ const server = http.createServer(async (req, res) => {
     handleHeard(+b.mic || 0, b.text); return send(200, { ok: true });
   }
   if (req.method === 'POST' && url.pathname === '/api/miclevels') { const b = await body(req); state.micLevels = b.levels || []; state.micSpeech = b.speech_ago || []; state.micTs = Date.now(); return send(200, { ok: true }); }
-  if (req.method === 'POST' && url.pathname === '/api/start') { state.running = true; state.paused = false; state.ctx = []; state.queue = []; state.turnN = 0; lastHeardCount = 0; state.mics = {}; state.door = { open: false, attempts: [] }; state.base.text = ''; resetChars(); resetPuzzles(); state.lastTick = 0; state.stage = 'idle'; state.active = null; state.pendingAdvance = null; save(); return send(200, { ok: true }); }
+  if (req.method === 'POST' && url.pathname === '/api/start') { state.running = true; state.paused = false; state.ctx = []; state.queue = []; state.turnN = 0; lastHeardCount = 0; state.mics = {}; state.door = { open: false, attempts: [] }; state.base.text = ''; resetChars(); resetPuzzles(); state.lastTick = 0; state.stage = 'idle'; state.active = null; state.pendingAdvance = null; state.subject = null; save(); return send(200, { ok: true }); }
   if (req.method === 'POST' && url.pathname === '/api/advance') { const b = await body(req); if (!state.running) { state.running = true; state.paused = false; } if (b.stage && STAGES.includes(b.stage)) setStage(b.stage); else advance(); return send(200, { stage: state.stage, active: state.active }); }
   if (req.method === 'POST' && url.pathname === '/api/pause') { const b = await body(req); state.paused = b.paused !== undefined ? !!b.paused : !state.paused; if (state.paused && speakChild) try { speakChild.kill('SIGKILL'); } catch (e) {} save(); return send(200, { paused: state.paused }); }
   if (req.method === 'POST' && url.pathname === '/api/micsetup') { const b = await body(req); state.micSetup = !!b.on; save(); return send(200, { micSetup: state.micSetup }); }
@@ -314,6 +325,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/check') return page(res, 'check.html');
   if (req.method === 'POST' && url.pathname === '/api/note') { const b = await body(req); if (b.text) handleHeard(0, b.text); return send(200, { ok: true }); }
   if (req.method === 'POST' && url.pathname === '/api/door') { const b = await body(req); const ok = tryDoor(b.word || ''); return send(200, { ok, line: ok ? 'The door remembers the Duchess.' : REJECTIONS[state.door.attempts.length % REJECTIONS.length] }); }
+  if (req.method === 'POST' && url.pathname === '/api/forgive') { const cur = currentTarget(); if (cur) cur.humansSaidIt = false; save(); return send(200, { ok: true }); }
   if (req.method === 'POST' && url.pathname === '/api/solve') { const b = await body(req); if (state.puzzles[b.puzzle]) { state.puzzles[b.puzzle].solved = !!b.solved; save(); } return send(200, { puzzles: state.puzzles }); }
   if (req.method === 'POST' && url.pathname === '/api/auto') { const b = await body(req); if (b.volume !== undefined) state.volume = +b.volume; if (b.rate !== undefined) state.rate = +b.rate; save(); return send(200, { ok: true }); }
   if (req.method === 'POST' && url.pathname === '/api/nudge') { const b = await body(req); const c = state.chars.find(x => x.name === b.name); if (c) { if (c.engine === 'base') scrollTurn(c); else pushOne(c, b.text ? `(the storyteller whispers to you: ${b.text})` : 'speak now.'); } return send(200, { ok: true }); }

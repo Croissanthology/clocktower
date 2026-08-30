@@ -71,12 +71,13 @@ async function api(p,d){return (await fetch(p,{method:d?'POST':'GET',headers:{'C
 const cv=document.getElementById('noise'), cx=cv.getContext('2d'); const img=cx.createImageData(cv.width,cv.height);
 setInterval(()=>{ const d=img.data; for(let i=0;i<d.length;i+=4){ const v=(Math.random()*255)|0; d[i]=d[i+1]=d[i+2]=v; d[i+3]=255; } cx.putImageData(img,0,0); }, 1000/12);
 let lastLen=-1, lastBase='';
-const PUZ={mushroom:'the mushroom',door:'the little door',verse:'the verse',lies:'two lies & a truth'};
+const PUZ={mushroom:'the mushroom',user:'the user',door:'the little door'};
 async function poll(){
   try{ const S=await api('/api/state');
     document.getElementById('pauseb').className=S.paused?'on':''; document.getElementById('pauseb').textContent=S.paused?'PAUSED — resume':'pause';
     document.getElementById('startb').className=S.running?'':'on';
-    document.getElementById('stage').textContent=(S.stage||'idle')+(S.active?' · '+S.active:'')+'   (space = next stage)';
+    const rung=(S.ladder||[])[S.rung||0]; document.getElementById('stage').textContent=(S.stage||'idle')+(S.active?' · '+S.active:'')+(S.stage==='scroll'&&rung?'   word: '+rung.word+(rung.humansSaidIt?' (SPOILT — click forgive)':''):'')+(S.stage==='user'&&S.subject?'   poem about '+S.subject:'')+'   (space = next stage)';
+    document.getElementById('stage').onclick=()=>{ if(S.stage==='scroll') api('/api/forgive',{}); };
     document.getElementById('mics').innerHTML=[1,2,3,4,5,6,7].map(i=>{const m=S.mics[i]; const live=S.micSpeech&&S.micSpeech[i-1]!=null&&S.micSpeech[i-1]<4; return `<span class="${live?'live':''}">${i} ${m?esc(m.name):''}</span>`;}).join('');
     document.getElementById('chars').innerHTML=S.chars.map(c=>`<div class="card" style="--h:${c.hue}"><div class="nm">${esc(c.name)}<span class="dot ${c.status==='thinking'?'on':''}"></span></div><div class="st">${esc(c.lastStatus)}</div><button onclick="api('/api/nudge',{name:'${esc(c.name)}'})">nudge</button></div>`).join('');
     document.getElementById('puz').innerHTML=Object.keys(PUZ).map(k=>`<span class="${S.puzzles[k]&&S.puzzles[k].solved?'ok':''}" onclick="api('/api/solve',{puzzle:'${k}',solved:!(S.puzzles['${k}']&&S.puzzles['${k}'].solved)})">${PUZ[k]}</span>`).join('');
