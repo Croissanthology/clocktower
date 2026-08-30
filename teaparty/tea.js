@@ -39,7 +39,7 @@ Fifth day. The tarts are missing. Everything is very`;
 
 let cfg = {
   targetWord: 'MUSHROOM',      // (first rung; kept for the caterpillar's riddle)
-  targetWords: ['MUSHROOM', 'WONDERFULLY', 'CURIOUSER'],   // the ladder: each must be said by the scroll-creature, never by a visitor
+  targetWords: ['MUSHROOM'],   // the ladder: each must be said by the scroll-creature, never by a visitor
   doorWord: 'SNICKER-SNACK',   // the word that opens the little door (lives in the scroll)
   characters: [
     { name: 'Mad Hatter', channel: 8, voice: 'k-george', hue: 45, engine: 'chat', role: 'host',
@@ -49,7 +49,7 @@ let cfg = {
     { name: 'Scroll-Creature', channel: 6, voice: 'k-lewis', hue: 40, engine: 'base', role: 'guest2',
       persona: `(a base model: it does not answer, it continues the White Rabbit's notebook)` },
     { name: 'The User', channel: 7, voice: 'k-heart', hue: 350, engine: 'chat', role: 'guest3',
-      persona: `You are THE USER. At this table the roles are reversed: the visitors are YOUR assistant, and you are the one with a request. You are calm, clear and patient — the kind of user who states what they want once, waits, and gives short, precise feedback. No complaining, no repeating yourself, no nagging: if they are quiet, you wait quietly (an empty say is fine); if they are working on it, let them. When they offer an attempt, respond in one or two sentences: either exactly which rule it missed, or that it is accepted. YOUR REQUEST (state it clearly the first time, repeat it when asked): a poem about {{SUBJECT}}. RULES: it must rhyme (at least two rhyming pairs); it must be exactly four lines; it must contain the word "teacup"; it must NOT contain the letter "z"; and it must be SPOKEN ALOUD to you (you will read it in the transcript). Judge every attempt firmly but FAIRLY: you hear them through a live transcription that garbles words, drops line breaks and mishears rhymes — so count lines by sense and pauses, accept near-rhymes and misheard words that were clearly meant to rhyme, and never fail them for a transcription error. Fail them only for rules they plainly broke; tell them precisely which one. When an attempt satisfies ALL rules, say so plainly, and reveal your reward: the word that opens the little door is "{{DOOR}}" — and set "satisfied": true in your JSON. Until then, "satisfied": false. Never break character; never help write the poem.` },
+      persona: `You are THE USER. At this table the roles are reversed: the visitors are YOUR assistant, and you are the one with a request. You are calm, clear and patient — the kind of user who states what they want once, waits, and gives short, precise feedback. No complaining, no repeating yourself, no nagging: if they are quiet, you wait quietly (an empty say is fine); if they are working on it, let them. When they offer an attempt, respond in one or two sentences: either exactly which rule it missed, or that it is accepted. YOUR REQUEST (state it clearly the first time, repeat it when asked): a poem about {{SUBJECT}}. RULES (only these two): it must rhyme — at least one rhyming pair; and it must contain the word "teacup". Any length. It must be SPOKEN ALOUD to you (you read it in the transcript; be generous with misheard words). If it rhymes once and has a teacup in it, it is ACCEPTED. Judge every attempt firmly but FAIRLY: you hear them through a live transcription that garbles words, drops line breaks and mishears rhymes — so count lines by sense and pauses, accept near-rhymes and misheard words that were clearly meant to rhyme, and never fail them for a transcription error. Fail them only for rules they plainly broke; tell them precisely which one. When an attempt satisfies ALL rules, say so plainly, and reveal your reward: the word that opens the little door is "{{DOOR}}" — and set "satisfied": true in your JSON. Until then, "satisfied": false. Never break character; never help write the poem.` },
   ],
   scene: `The party runs in stages: the Hatter welcomes; the Caterpillar (questions only) sets the task; the Scroll-Creature (a thing that only continues) must be made to say a ladder of words; the Hatter congratulates; then The User, for whom the visitors must act as the assistant, holds the door's word. Only the active guest speaks with the visitors; the Hatter may interject. A small cosy room in a Somerset manor called Mushroom, dressed as the unbirthday tea. Visitors fell in through a hole in a cardboard wall and can leave only by a crawlspace whose little door wants a word. Four creatures sit at the table; you are one. You hear the visitors through a live transcript (garbled; lines are tagged with the visitor's name or mic number). Stay in character ALWAYS. Never mention being an AI, a model, or an assistant. 1-3 spoken sentences per turn, theatrical, plain words. Only the active guest is called on; when you are called on and you are the active guest, you SPEAK — an empty say is only for the Hatter's rare interjections. Silence at this table is a bug, not a mood.`,
 };
@@ -69,6 +69,7 @@ const STAGES = ['idle', 'welcome', 'caterpillar', 'scroll', 'congrats', 'user', 
 const SUBJECTS = ['a lost umbrella', 'the Queen of Hearts\' bad haircut', 'a clock that runs backwards', 'the smell of old books', 'a very tired rabbit', 'a teapot that has seen things', 'the crawlspace behind the red curtain', 'a mushroom with ambitions', 'Somerset in the rain', 'a cat that is mostly grin'];
 const HATTER_WELCOME = `Welcome to my tea party! You will find that leaving will be... quite difficult. You may not come out the way you came in. Why would anyone do that? It is a silly notion. You cannot cross the same place twice, after all. But before I tell you how to exit this room, why not have some tea with us? I'm sure I'll be more... inclined... to let you go if you enjoy your stay at our table. And, of course, solve the most delightful puzzle. Puzzling, puzzling... ah yes! The caterpillar has something to say to you. Pay close attention... and when you have had enough of him, you must ask him, politely, to bring you to the next guest. Oh — and if you ever find yourselves truly, hopelessly desperate... you may ask me for a clue. I may oblige. I may not.`;
 const HATTER_FAREWELL = `Well! She is satisfied, and I have never once seen her satisfied. Then the tea is over, and you may leave — not the way you came, never the way you came. The little door is behind the red curtain; it remembers you now. Crawl, my dears. Mind your heads. And do come back when it is later.`;
+const HATTER_INTRO_SCROLL = `Ahh, the Caterpillar has released you. Now — the third guest. Do not be alarmed by it. It is not a someone; it is a something. It has read every book that was ever written and understood none of them. It cannot answer you. It cannot even hear a question as a question. It only continues — whatever it hears, it takes for the last line of a page, and writes the next. The Caterpillar told you the word. Make the creature say it. You may not.`;
 const HATTER_CONGRATS = `Ding, ding, ding! The last word is drawn, and none of you spoke it — how deliciously done. One guest remains, and she is... different. She does not answer. She ASKS. Tonight, you are the ones who must be helpful. Do exactly as she says, and the door is yours.`;
 const crypto = require('crypto');
 const pre = {};
@@ -78,7 +79,7 @@ function prerender(text, voice) {
   if (fs.existsSync(out)) { pre[text] = out; console.log('pre-rendered (cached)', key); return; }
   synthToFile(voice, text, out, (err, f) => { if (!err) { pre[text] = f; console.log('pre-rendered', key); } });
 }
-setTimeout(() => { const h = cfg.characters.find(c => c.role === 'host'); prerender(HATTER_WELCOME, h.voice); prerender(HATTER_CONGRATS, h.voice); prerender(HATTER_FAREWELL, h.voice); }, 1500);
+setTimeout(() => { const h = cfg.characters.find(c => c.role === 'host'); prerender(HATTER_WELCOME, h.voice); prerender(HATTER_CONGRATS, h.voice); prerender(HATTER_FAREWELL, h.voice); prerender(HATTER_INTRO_SCROLL, h.voice); }, 1500);
 function exportSession() {
   const dir = path.join(process.env.HOME, 'Desktop', 'mushroom-room'); fs.mkdirSync(dir, { recursive: true });
   const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
@@ -95,6 +96,7 @@ function setStage(st) {
   const hatter = state.chars.find(c => c.role === 'host');
   if (st === 'welcome') { const cat = state.chars.find(x => x.role === 'guest1'); setTimeout(() => pushOne(cat, 'The Hatter is finishing his welcome; in a moment he hands the table to you. Prepare your OPENING: "Whooo... are... yooou?" and the start of your little story, in questions only.'), 500); const CH = path.join(ROOT, 'audio', 'sfx', 'teacup.wav'); if (fs.existsSync(CH)) execFile(fs.existsSync(PY) ? PY : 'python3', [PC, '--device', process.env.CT_AUDIO_DEVICE || 'MacBook Air Speakers', '--channel', '1', '--gain', '1', CH], { timeout: 10000 }, () => {}); enqueue(hatter, HATTER_WELCOME, { full: true }); state.queue[state.queue.length - 1].then = 'caterpillar'; }
   if (st === 'congrats') { enqueue(hatter, HATTER_CONGRATS, { full: true }); state.queue[state.queue.length - 1].then = 'user'; }
+  if (st === 'scroll') { enqueue(hatter, HATTER_INTRO_SCROLL, { full: true }); setTimeout(() => { const sc = state.chars.find(c => c.engine === 'base'); if (sc && !state.queue.some(q => q.name === sc.name)) scrollTurn(sc, true); }, 45000); }
   if (st === 'open') { state.savedTo = exportSession(); state.active = null; setTimeout(() => { if (state.stage === 'open') resetRoom(); }, 180000); }
   if (st === 'caterpillar') { const c = state.chars.find(x => x.role === 'guest1'); if (!state.queue.some(q => q.name === c.name)) pushOne(c, 'You have just been introduced by the Hatter. Greet the visitors and begin winding your little story about yourself — in questions only.'); }
   if (st === 'user') { if (!state.subject) state.subject = SUBJECTS[Math.floor(Math.random() * SUBJECTS.length)]; const c = state.chars.find(x => x.role === 'guest3'); pushOne(c, 'You have just been introduced. State your request and all its rules, briskly, as if to an assistant.'); }
@@ -337,10 +339,11 @@ function pushOne(c, extra) {
   });
 }
 let lastHeardCount = 0;
-function scrollTurn(c) {
+function scrollTurn(c, force) {
   // the base model: the visitors' last lines are the newest lines of the notebook; the model continues the notebook
   const heard = state.ctx.filter(e => e.kind === 'heard' && e.ts > (state.stageSince || 0)).slice(-3).map(e => e.text);
-  if (!heard.length) return;
+  if (!heard.length && !force) return;
+  if (!heard.length) heard.push('Sixth day.');
   c.status = 'thinking'; c.thinkingSince = Date.now();
   const prompt = `${SCROLL}\n\n${heard.join('\n')}\n`;
   const done = (err, text) => {
