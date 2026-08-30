@@ -74,7 +74,7 @@ function setStage(st) {
   state.stage = st; state.stageSince = Date.now(); state.active = activeName();
   ctxAppend({ kind: 'phase', text: `— ${st.toUpperCase()} —` });
   const hatter = state.chars.find(c => c.role === 'host');
-  if (st === 'welcome') { enqueue(hatter, HATTER_WELCOME, { full: true }); state.queue[state.queue.length - 1].then = 'caterpillar'; }
+  if (st === 'welcome') { const CH = path.join(ROOT, 'audio', 'sfx', 'teacup.wav'); if (fs.existsSync(CH)) execFile(fs.existsSync(PY) ? PY : 'python3', [PC, '--device', process.env.CT_AUDIO_DEVICE || 'MacBook Air Speakers', '--channel', '1', '--gain', '1', CH], { timeout: 10000 }, () => {}); enqueue(hatter, HATTER_WELCOME, { full: true }); state.queue[state.queue.length - 1].then = 'caterpillar'; }
   if (st === 'congrats') { enqueue(hatter, HATTER_CONGRATS, { full: true }); state.queue[state.queue.length - 1].then = 'user'; }
   if (st === 'caterpillar') { const c = state.chars.find(x => x.role === 'guest1'); pushOne(c, 'You have just been introduced by the Hatter. Greet the visitors and begin winding your little story about yourself — in questions only.'); }
   if (st === 'user') { if (!state.subject) state.subject = SUBJECTS[Math.floor(Math.random() * SUBJECTS.length)]; const c = state.chars.find(x => x.role === 'guest3'); pushOne(c, 'You have just been introduced. State your request and all its rules, briskly, as if to an assistant.'); }
@@ -109,7 +109,7 @@ const PAUSE_S = +process.env.TEA_PAUSE || 0.65;
 // sentence by sentence, with a breath of silence between — synth engines otherwise run everything together
 function synthToFile(voice, text, outfile, cb) {
   const sents = (String(text).match(/[^.!?…]+[.!?…]+["')]?|[^.!?…]+$/g) || [String(text)]).map(x => x.trim()).filter(Boolean);
-  if (sents.length < 2 || voice === 'eerie') return synthOne(voice, text, outfile, cb);
+  if (sents.length < 2 || voice === 'eerie') return synthOne(voice, text, outfile, (err, f) => err ? cb(err, f) : loudify(f, g => cb(null, g)));
   const parts = []; let i = 0;
   const next = () => {
     if (i >= sents.length) {
@@ -120,7 +120,7 @@ function synthToFile(voice, text, outfile, cb) {
         fs.writeFileSync(list, parts.flatMap(f => [`file '${f}'`, `file '${silence}'`]).slice(0, -1).join('\n'));
         execFile('ffmpeg', ['-y', '-loglevel', 'error', '-f', 'concat', '-safe', '0', '-i', list, '-ar', '24000', '-ac', '1', outfile], (err) => {
           if (err) return synthOne(voice, text, outfile, cb);
-          cb(null, outfile);
+          loudify(outfile, f => cb(null, f));
         });
       });
     }
@@ -128,6 +128,11 @@ function synthToFile(voice, text, outfile, cb) {
     synthOne(voice, sents[i], part, (err, f) => { if (!err) parts.push(f); i++; next(); });
   };
   next();
+}
+function loudify(file, cb) {
+  const out = file.replace(/\.(wav|aiff)$/, '-loud.wav');
+  execFile('ffmpeg', ['-y', '-loglevel', 'error', '-i', file, '-af', 'acompressor=threshold=-20dB:ratio=6:attack=4:release=90:makeup=10dB,alimiter=limit=0.97:level=false', '-ar', '24000', '-ac', '1', out],
+    { timeout: 30000 }, (err) => cb(err ? file : out));
 }
 function synthOne(voice, text, outfile, cb) {
   execFile(SYNTH, [voice, outfile, text], { timeout: 90000 }, (err) => {

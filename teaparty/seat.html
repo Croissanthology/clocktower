@@ -49,6 +49,12 @@
   #stage { display:flex; } #feed { display:none; }
   body.transcript #feed { display:block; } body.transcript #stage { display:none; }
   body.dim #stage { display:none; }   /* a creature that is not on chills: name and smoke, nothing else */
+  #stage { overflow-y:auto; max-height:70vh; scrollbar-width:none; }
+  #prompt { display:none; position:fixed; left:0; right:0; bottom:9vh; text-align:center; z-index:5; font:italic 600 30px/1.3 "Iowan Old Style", Palatino, Georgia, serif; color:#f3e6c3; letter-spacing:.06em; text-shadow:0 0 18px rgba(243,230,195,.55), 0 2px 0 #000; animation:breathe 2.6s ease-in-out infinite; }
+  body.idle #prompt { display:block; }
+  @keyframes breathe { 0%,100% { opacity:.35 } 50% { opacity:1 } }
+  body.begun #ui { animation:begun 1.2s; }
+  @keyframes begun { 0% { filter:brightness(3) } 100% { filter:brightness(1) } }
   .line.heard.bright { color:var(--ink); font-size:24px; font-style:normal; }
   #stage .w { opacity:0; display:inline-block; margin-right:.28em; transform:translateY(6px); transition:opacity .35s, transform .35s; }
   #stage .w.on { opacity:1; transform:none; }
@@ -62,6 +68,7 @@
 </style>
 <body>
 <div id="bg"></div><canvas id="noise" width="128" height="96"></canvas><div id="scan"></div><div id="vig"></div>
+<div id="prompt">press space to begin the tea</div>
 <div id="ui"><h1 id="name">…</h1><div id="feed"></div><div id="stage"></div><div id="think">✦</div><div id="foot">mushroom · séance terminal</div></div>
 <script>
 const nParam = new URLSearchParams(location.search).get('n') || '1';
@@ -74,14 +81,14 @@ function letters(s){ let i=0; return esc(s).replace(/(&[a-z]+;|.)/g, m=>`<span c
 const cv=document.getElementById('noise'), cx=cv.getContext('2d'); const img=cx.createImageData(cv.width,cv.height);
 setInterval(()=>{ const d=img.data; for(let i=0;i<d.length;i+=4){ const v=(Math.random()*255)|0; d[i]=d[i+1]=d[i+2]=v; d[i+3]=255; } cx.putImageData(img,0,0); }, 1000/12);
 setInterval(()=>{ if(Math.random()<.5){ cv.classList.add('tear'); setTimeout(()=>cv.classList.remove('tear'), 90+Math.random()*160); } }, 25000);
-let me=null, seen=0, lastLen=-1, justSpoke=false, lastSayTs=0, revealText='', revealTimer=null, revealId=null;
+let me=null, seen=0, lastLen=-1, justSpoke=false, lastSayTs=0, revealText='', revealTimer=null, revealId=null, begun=false;
 // word-by-word reveal paced to the voice: ~150 wpm at rate 1, plus the teacup chime's head start
 function reveal(text, rate){
   revealText=text; clearInterval(revealTimer);
   const words=text.split(/\s+/).filter(Boolean); const st=document.getElementById('stage');
   st.innerHTML=words.map(w=>`<span class="w">${esc(w)}</span>`).join('');
   const per = (60/150)/(rate||1)*1000; let i=0;
-  setTimeout(()=>{ revealTimer=setInterval(()=>{ const el=st.children[i]; if(!el){ clearInterval(revealTimer); return; } el.classList.add('on'); i++; }, per); }, 1400);
+  setTimeout(()=>{ revealTimer=setInterval(()=>{ const el=st.children[i]; if(!el){ clearInterval(revealTimer); return; } el.classList.add('on'); el.scrollIntoView({block:'nearest'}); i++; }, per); }, 1400);
 }
 async function poll(){
   try{
@@ -98,7 +105,7 @@ async function poll(){
       const cls = me.engine==='base' ? 'scroll' : (me.name.includes('Cheshire') ? 'cheshire' : '');
       const speakingMe = S.speaking && S.speaking.player===me.name;
       const isActive = S.active===me.name || speakingMe;
-      document.body.className = cls + (isActive ? ' active' : ' dim') + (justSpoke ? ' flash' : ''); justSpoke=false;
+      document.body.className = cls + (isActive ? ' active' : ' dim') + (justSpoke ? ' flash' : '') + ((S.stage||'idle')==='idle' ? ' idle' : '') + (begun ? ' begun' : ''); begun=false;
       if (speakingMe && S.speaking.id!==revealId) { revealId=S.speaking.id; reveal(S.speaking.text, S.rate||0.95); }
       else if (!speakingMe) { // between lines: keep the last thing it said on screen, fully shown
         const mine=S.ctx.filter(e=>e.kind==='say'&&e.player===me.name); const last=mine[mine.length-1];
@@ -122,7 +129,7 @@ async function poll(){
 poll();
 // space on ANY screen starts the party (only from idle — later stages advance from the main screen)
 document.addEventListener('keydown', async e=>{ if(e.code!=='Space') return; e.preventDefault(); /* startOnSpace */
-  try{ const S=await (await fetch('/api/state')).json(); if((S.stage||'idle')==='idle') await fetch('/api/advance',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); }catch(err){} });
+  try{ const S=await (await fetch('/api/state')).json(); if((S.stage||'idle')==='idle'){ begun=true; document.getElementById('prompt').textContent='the tea begins…'; await fetch('/api/advance',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}); } }catch(err){} });
 </script>
 
 <script>
