@@ -53,9 +53,16 @@ let cfg = {
   scene: `A small cosy room in a Somerset manor called Mushroom, dressed as the unbirthday tea. Visitors fell in through a hole in a cardboard wall and can leave only by a crawlspace whose little door wants a word. Four creatures sit at the table; you are one. You hear the visitors through a live transcript (garbled; lines are tagged with the visitor's name or mic number). Stay in character ALWAYS. Never mention being an AI, a model, or an assistant. 1-3 spoken sentences per turn, theatrical, plain words. Do not speak every round: four creatures share one table; speak when addressed, when you have something delicious, or roughly every third round.`,
 };
 
+// permanent room labels: which speaker channel each creature sits on, which mic each seat/person holds
+const ROOM_FILE = path.join(__dirname, 'room.json');
+let room = { speakers: {}, mics: {} };
+try { room = Object.assign(room, JSON.parse(fs.readFileSync(ROOM_FILE, 'utf8'))); } catch (e) {}
+function saveRoom() { fs.writeFileSync(ROOM_FILE, JSON.stringify(room, null, 1)); }
+function applyRoom() { for (const c of cfg.characters) if (room.speakers[c.name]) c.channel = +room.speakers[c.name]; }
+applyRoom();
 let state = { running: false, paused: false, ctx: [], turnN: 0, speaking: null, queue: [], seq: 0, chars: [],
   mics: {}, micLevels: [], micSpeech: [], micTs: 0, micSetup: false, puzzles: {}, door: { open: false, attempts: [] }, base: { text: '', alive: false }, volume: 0.6, rate: 0.95 };
-function resetChars() { state.chars = cfg.characters.map(c => ({ name: c.name, channel: c.channel, hue: c.hue, engine: c.engine, voice: c.voice, status: 'idle', lastStatus: '', lines: 0 })); }
+function resetChars() { applyRoom(); state.chars = cfg.characters.map(c => ({ name: c.name, channel: c.channel, hue: c.hue, engine: c.engine, voice: c.voice, status: 'idle', lastStatus: '', lines: 0 })); }
 function resetPuzzles() { state.puzzles = { mushroom: { solved: false, humansSaidIt: false, by: null }, door: { solved: false }, verse: { solved: false }, lies: { solved: false } }; }
 resetChars(); resetPuzzles();
 function save() { fs.writeFileSync(path.join(RUN, 'state.json'), JSON.stringify(state, null, 1)); }
@@ -139,7 +146,7 @@ function handleHeard(mic, text) {
     if (n >= 1 && n <= 8) { state.mics[n] = { name, ts: Date.now(), heardOn: mic }; ctxAppend({ kind: 'phase', text: `${name} is on mic ${n}${mic !== n ? ` (heard on mic ${mic})` : ''}` }); save(); return; }
   }
   if (state.micSetup && m1) { const n = micNumber(m1[1]); state.mics[n] = { ...(state.mics[n] || {}), verified: true, heardOn: mic, ts: Date.now() }; ctxAppend({ kind: 'phase', text: `mic ${n} check: heard on channel ${mic}${mic !== n ? ' — MISMATCH' : ' — ok'}` }); save(); return; }
-  const who = (state.mics[mic] && state.mics[mic].name) || `mic ${mic}`;
+  const who = (state.mics[mic] && state.mics[mic].name) || (room.mics[mic] ? room.mics[mic] : null) || `mic ${mic}`;
   ctxAppend({ kind: 'heard', mic, who, text: t });
   if (norm(t).includes(cfg.targetWord)) state.puzzles.mushroom.humansSaidIt = true;
   save();
@@ -245,7 +252,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/seat') return page(res, 'seat.html');
     if (url.pathname === '/door') return page(res, 'door.html');
     if (url.pathname === '/mics') return page(res, 'mics.html');
-    if (url.pathname === '/api/state') return send(200, { ...state, ctx: state.ctx.slice(-200), cfg: { targetWord: cfg.targetWord, characters: cfg.characters.map(c => ({ name: c.name, channel: c.channel, hue: c.hue, engine: c.engine })) } });
+    if (url.pathname === '/api/state') return send(200, { ...state, room, ctx: state.ctx.slice(-200), cfg: { targetWord: cfg.targetWord, characters: cfg.characters.map(c => ({ name: c.name, channel: c.channel, hue: c.hue, engine: c.engine })) } });
   }
   if (req.method === 'POST' && url.pathname === '/api/hear') {
     const b = await body(req);
@@ -257,6 +264,21 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/pause') { const b = await body(req); state.paused = b.paused !== undefined ? !!b.paused : !state.paused; if (state.paused && speakChild) try { speakChild.kill('SIGKILL'); } catch (e) {} save(); return send(200, { paused: state.paused }); }
   if (req.method === 'POST' && url.pathname === '/api/micsetup') { const b = await body(req); state.micSetup = !!b.on; save(); return send(200, { micSetup: state.micSetup }); }
   if (req.method === 'POST' && url.pathname === '/api/register') { const b = await body(req); const n = +b.mic; if (n) { if (b.name) state.mics[n] = { name: String(b.name), ts: Date.now() }; else delete state.mics[n]; } save(); return send(200, { mics: state.mics }); }
+  if (req.method === 'POST' && url.pathname === '/api/speakertest') {
+    const b = await body(req); const ch = +b.channel || 5;
+    const f = path.join(RUN, `speakertest-${ch}.aiff`);
+    execFile('say', ['-v', 'Daniel', '-o', f, `This is speaker ${ch}. Speaker ${ch}.`], { timeout: 20000 }, () => playFile(f, ch, () => {}));
+    return send(200, { ok: true, channel: ch });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/room') {
+    const b = await body(req);
+    if (b.speakers) room.speakers = { ...room.speakers, ...b.speakers };
+    if (b.mics) room.mics = { ...room.mics, ...b.mics };
+    for (const k of Object.keys(room.mics)) if (!room.mics[k]) delete room.mics[k];
+    saveRoom(); applyRoom(); for (const c of state.chars) { const conf = cfg.characters.find(x => x.name === c.name); c.channel = conf.channel; }
+    save(); return send(200, { room });
+  }
+  if (req.method === 'GET' && url.pathname === '/check') return page(res, 'check.html');
   if (req.method === 'POST' && url.pathname === '/api/note') { const b = await body(req); if (b.text) handleHeard(0, b.text); return send(200, { ok: true }); }
   if (req.method === 'POST' && url.pathname === '/api/door') { const b = await body(req); const ok = tryDoor(b.word || ''); return send(200, { ok, line: ok ? 'The door remembers the Duchess.' : REJECTIONS[state.door.attempts.length % REJECTIONS.length] }); }
   if (req.method === 'POST' && url.pathname === '/api/solve') { const b = await body(req); if (state.puzzles[b.puzzle]) { state.puzzles[b.puzzle].solved = !!b.solved; save(); } return send(200, { puzzles: state.puzzles }); }
