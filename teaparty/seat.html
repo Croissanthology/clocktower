@@ -23,6 +23,11 @@
   /* 5. vignette / porthole */
   #vig { position:fixed; inset:0; z-index:4; pointer-events:none; background:radial-gradient(ellipse 70% 62% at 50% 50%, transparent 40%, rgba(0,0,0,.55) 70%, rgba(0,0,0,.96) 100%); }
   /* 4. the transcript */
+  body.dim #ui, body.dim #bg { filter:brightness(.18) saturate(.4); transition:filter 1.6s; }
+  body.dim #bg { filter:blur(38px) brightness(.12); }
+  #ui, #bg { transition:filter 1.2s; }
+  body.flash #ui { animation:flash .9s; }
+  @keyframes flash { 0% { filter:brightness(2.2) } 100% { filter:brightness(1) } }
   #ui { position:relative; z-index:3; height:100%; display:flex; flex-direction:column; align-items:center; padding:5vh 6vw 4vh; }
   h1 { margin:0 0 2vh; font-style:italic; font-weight:600; font-size:38px; color:hsl(var(--hue) 70% 78%); text-shadow:0 0 18px hsl(var(--hue) 80% 60% / .7), 0 0 2px #000; letter-spacing:.03em; }
   #feed { width:min(820px, 90vw); flex:1; overflow-y:auto; scrollbar-width:none; mask-image:linear-gradient(to bottom, transparent, #000 8%, #000 92%, transparent); padding:4vh 0; }
@@ -56,14 +61,18 @@ function letters(s){ let i=0; return esc(s).replace(/(&[a-z]+;|.)/g, m=>`<span c
 const cv=document.getElementById('noise'), cx=cv.getContext('2d'); const img=cx.createImageData(cv.width,cv.height);
 setInterval(()=>{ const d=img.data; for(let i=0;i<d.length;i+=4){ const v=(Math.random()*255)|0; d[i]=d[i+1]=d[i+2]=v; d[i+3]=255; } cx.putImageData(img,0,0); }, 1000/12);
 setInterval(()=>{ if(Math.random()<.5){ cv.classList.add('tear'); setTimeout(()=>cv.classList.remove('tear'), 90+Math.random()*160); } }, 25000);
-let me=null, seen=0, lastLen=-1;
+let me=null, seen=0, lastLen=-1, justSpoke=false, lastSayTs=0;
 async function poll(){
   try{
     const S=await (await fetch('/api/state')).json();
     me = S.cfg.characters[n-1];
     if(me){ document.documentElement.style.setProperty('--hue', me.hue); document.getElementById('name').textContent=me.name;
-      document.body.className = me.engine==='base' ? 'scroll' : (me.name.includes('Cheshire') ? 'cheshire' : ''); }
+      const cls = me.engine==='base' ? 'scroll' : (me.name.includes('Cheshire') ? 'cheshire' : '');
+      const isActive = S.active===me.name || (me.role==='host');
+      document.body.className = cls + (isActive ? '' : ' dim') + (justSpoke ? ' flash' : ''); justSpoke=false; }
     const mine = S.chars[n-1]; document.getElementById('think').className = mine && mine.status==='thinking' ? 'on' : '';
+    const mineSays = S.ctx.filter(e=>e.kind==='say' && me && e.player===me.name); const lastMine = mineSays[mineSays.length-1];
+    if(lastMine && lastMine.ts!==lastSayTs){ lastSayTs=lastMine.ts; justSpoke=true; }
     if(S.ctx.length!==lastLen){
       lastLen=S.ctx.length; const f=document.getElementById('feed'); const items=S.ctx.slice(-40);
       f.innerHTML = items.map((e,i)=>{

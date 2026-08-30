@@ -49,7 +49,7 @@
 <body>
 <div id="bg"></div><canvas id="noise" width="160" height="100"></canvas><div id="scan"></div><div id="vig"></div>
 <div id="ui">
-  <div class="top"><h1>the mushroom room</h1>
+  <div class="top"><h1>the mushroom room</h1><span id="stage" style="color:#f0d36a;letter-spacing:.2em;text-transform:uppercase;font-size:13px"></span>
     <div class="mics" id="mics"></div>
     <button id="startb" onclick="api('/api/start',{})">start fresh</button>
     <button id="pauseb" onclick="api('/api/pause',{})">pause</button>
@@ -76,6 +76,7 @@ async function poll(){
   try{ const S=await api('/api/state');
     document.getElementById('pauseb').className=S.paused?'on':''; document.getElementById('pauseb').textContent=S.paused?'PAUSED — resume':'pause';
     document.getElementById('startb').className=S.running?'':'on';
+    document.getElementById('stage').textContent=(S.stage||'idle')+(S.active?' · '+S.active:'')+'   (space = next stage)';
     document.getElementById('mics').innerHTML=[1,2,3,4,5,6,7].map(i=>{const m=S.mics[i]; const live=S.micSpeech&&S.micSpeech[i-1]!=null&&S.micSpeech[i-1]<4; return `<span class="${live?'live':''}">${i} ${m?esc(m.name):''}</span>`;}).join('');
     document.getElementById('chars').innerHTML=S.chars.map(c=>`<div class="card" style="--h:${c.hue}"><div class="nm">${esc(c.name)}<span class="dot ${c.status==='thinking'?'on':''}"></span></div><div class="st">${esc(c.lastStatus)}</div><button onclick="api('/api/nudge',{name:'${esc(c.name)}'})">nudge</button></div>`).join('');
     document.getElementById('puz').innerHTML=Object.keys(PUZ).map(k=>`<span class="${S.puzzles[k]&&S.puzzles[k].solved?'ok':''}" onclick="api('/api/solve',{puzzle:'${k}',solved:!(S.puzzles['${k}']&&S.puzzles['${k}'].solved)})">${PUZ[k]}</span>`).join('');
@@ -89,5 +90,6 @@ async function poll(){
   setTimeout(poll,1000);
 }
 poll();
+document.addEventListener('keydown', e=>{ if(e.code==='Space' && document.activeElement.tagName!=='INPUT'){ e.preventDefault(); api('/api/advance',{}); } });
 </script>
 </body>
