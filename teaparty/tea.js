@@ -172,7 +172,12 @@ function synthOne(voice, text, outfile, cb) {
 }
 let synthBusy = false;
 function pump() {
-  if (state.paused || state.speaking || !state.queue.length) return;
+  if (state.paused || !state.queue.length) return;
+  // only the active guest and the host may hold the floor; anything else queued is stale
+  const hostName = (state.chars.find(c => c.role === 'host') || {}).name;
+  state.queue = state.queue.filter(x => x.hold || x.name === state.active || x.name === hostName || x.then);
+  // synthesize ahead while a line is playing, so the next line is ready the moment this one ends
+  if (state.speaking) { const nx = state.queue.find(x => !x.file && (!x.hold || x.hold === state.stage)); if (nx && !synthBusy) { synthBusy = true; synthToFile(nx.voice, nx.text, path.join(RUN, `line-${nx.id}.wav`), (err, f) => { synthBusy = false; if (err) state.queue.splice(state.queue.indexOf(nx), 1); else nx.file = f; save(); }); } return; }
   const q = state.queue.find(x => !x.hold || x.hold === state.stage); if (!q) return;
   if (!q.file) { if (!synthBusy) { synthBusy = true; synthToFile(q.voice, q.text, path.join(RUN, `line-${q.id}.wav`), (err, f) => { synthBusy = false; if (err) { log('player', { synthFailed: q.text.slice(0, 80) }); state.queue.splice(state.queue.indexOf(q), 1); if (q.then) setStage(q.then); } else q.file = f; save(); }); } return; }
   state.queue.splice(state.queue.indexOf(q), 1);
