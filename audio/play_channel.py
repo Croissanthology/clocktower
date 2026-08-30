@@ -158,6 +158,11 @@ def main():
         die(f"--rate must be positive (got {args.rate})")
     if args.rate != 1.0:
         data = resample_linear(data, args.rate)
+    DEVICE_RATE = 44100
+    if samplerate != DEVICE_RATE:
+        n_out = int(len(data) * DEVICE_RATE / samplerate)
+        data = np.interp(np.linspace(0, len(data), n_out, endpoint=False), np.arange(len(data)), data).astype("float32")
+        samplerate = DEVICE_RATE
     peak = float(np.max(np.abs(data))) if len(data) else 0.0
     if peak > 0.01:
         data = (data / peak * 0.98).astype("float32")   # normalise to full scale first

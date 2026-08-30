@@ -69,6 +69,15 @@ const STAGES = ['idle', 'welcome', 'caterpillar', 'scroll', 'congrats', 'user', 
 const SUBJECTS = ['a lost umbrella', 'the Queen of Hearts\' bad haircut', 'a clock that runs backwards', 'the smell of old books', 'a very tired rabbit', 'a teapot that has seen things', 'the crawlspace behind the red curtain', 'a mushroom with ambitions', 'Somerset in the rain', 'a cat that is mostly grin'];
 const HATTER_WELCOME = `Welcome to my tea party! You will find that leaving will be... quite difficult. You may not come out the way you came in. Why would anyone do that? It is a silly notion. You cannot cross the same place twice, after all. But before I tell you how to exit this room, why not have some tea with us? I'm sure I'll be more... inclined... to let you go if you enjoy your stay at our table. And, of course, solve the most delightful puzzle. Puzzling, puzzling... ah yes! The caterpillar has something to say to you. Pay close attention... and when you have had enough of him, you must ask him, politely, to bring you to the next guest.`;
 const HATTER_CONGRATS = `Ding, ding, ding! The last word is drawn, and none of you spoke it — how deliciously done. One guest remains, and she is... different. She does not answer. She ASKS. Tonight, you are the ones who must be helpful. Do exactly as she says, and the door is yours.`;
+const crypto = require('crypto');
+const pre = {};
+function prerender(text, voice) {
+  const key = crypto.createHash('md5').update(voice + text).digest('hex').slice(0, 10);
+  const out = path.join(RUN, `pre-${key}.wav`);
+  if (fs.existsSync(out)) { pre[text] = out; console.log('pre-rendered (cached)', key); return; }
+  synthToFile(voice, text, out, (err, f) => { if (!err) { pre[text] = f; console.log('pre-rendered', key); } });
+}
+setTimeout(() => { const h = cfg.characters.find(c => c.role === 'host'); prerender(HATTER_WELCOME, h.voice); prerender(HATTER_CONGRATS, h.voice); }, 1500);
 function activeName() { return { caterpillar: 'Caterpillar', scroll: 'Scroll-Creature', user: 'The User' }[state.stage] || null; }
 function setStage(st) {
   state.stage = st; state.stageSince = Date.now(); state.active = activeName();
@@ -163,7 +172,7 @@ function trimLine(text, maxWords = 75) {
   for (const se of sents) { const w = se.trim().split(/\s+/).length; if (out && n + w > maxWords) break; out += (out ? ' ' : '') + se.trim(); n += w; if (n >= maxWords) break; }
   return out || String(text).split(/\s+/).slice(0, maxWords).join(' ');
 }
-function enqueue(c, text, opts = {}) { state.queue.push({ id: ++state.seq, name: c.name, voice: c.voice, channel: c.channel, text: opts.full ? text : trimLine(text), ts: Date.now() }); c.lines++; }
+function enqueue(c, text, opts = {}) { state.queue.push({ id: ++state.seq, name: c.name, voice: c.voice, channel: c.channel, text: opts.full ? text : trimLine(text), ts: Date.now(), file: pre[text] || null }); c.lines++; }
 
 // ---------------- puzzles ----------------
 function norm(t) { return String(t || '').toUpperCase().replace(/[^A-Z0-9 -]/g, ' ').replace(/\s+/g, ' ').trim(); }
