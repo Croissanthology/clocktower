@@ -43,6 +43,13 @@
   #think.on { opacity:.9; animation:spin 4s linear infinite; }
   @keyframes spin { to { transform:rotate(360deg); } }
   #foot { color:hsl(var(--hue) 20% 50%); font-size:13px; letter-spacing:.2em; text-transform:uppercase; }
+  /* the active screen: only this creature's words, big, arriving with the voice */
+  #stage { display:none; flex:1; width:min(900px,92vw); align-items:center; justify-content:center; text-align:center;
+    font-size:clamp(28px, 4.2vw, 52px); line-height:1.35; color:var(--ink); text-shadow:0 0 22px hsl(var(--hue) 70% 60% / .5), 0 2px 0 #000; padding:2vh 0; }
+  body.active #stage { display:flex; } body.active #feed { display:none; }
+  #stage .w { opacity:0; display:inline-block; margin-right:.28em; transform:translateY(6px); transition:opacity .35s, transform .35s; }
+  #stage .w.on { opacity:1; transform:none; }
+  .scroll #stage { font-family:"Courier New", Courier, monospace; font-size:clamp(24px,3.4vw,40px); color:#e8d9b0; text-align:left; }
   .scroll #bg { filter:blur(30px) saturate(.6) brightness(.5) sepia(.8); }
   .scroll #ui { background:radial-gradient(ellipse at 50% 40%, rgba(120,90,40,.12), transparent 70%); }
   .scroll .line.creature { font:19px/1.7 "Courier New", Courier, monospace; color:#e8d9b0; letter-spacing:.02em; }
@@ -52,7 +59,7 @@
 </style>
 <body>
 <div id="bg"></div><canvas id="noise" width="128" height="96"></canvas><div id="scan"></div><div id="vig"></div>
-<div id="ui"><h1 id="name">…</h1><div id="feed"></div><div id="think">✦</div><div id="foot">mushroom · séance terminal</div></div>
+<div id="ui"><h1 id="name">…</h1><div id="feed"></div><div id="stage"></div><div id="think">✦</div><div id="foot">mushroom · séance terminal</div></div>
 <script>
 const n = +(new URLSearchParams(location.search).get('n') || 1);
 function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
@@ -61,15 +68,25 @@ function letters(s){ let i=0; return esc(s).replace(/(&[a-z]+;|.)/g, m=>`<span c
 const cv=document.getElementById('noise'), cx=cv.getContext('2d'); const img=cx.createImageData(cv.width,cv.height);
 setInterval(()=>{ const d=img.data; for(let i=0;i<d.length;i+=4){ const v=(Math.random()*255)|0; d[i]=d[i+1]=d[i+2]=v; d[i+3]=255; } cx.putImageData(img,0,0); }, 1000/12);
 setInterval(()=>{ if(Math.random()<.5){ cv.classList.add('tear'); setTimeout(()=>cv.classList.remove('tear'), 90+Math.random()*160); } }, 25000);
-let me=null, seen=0, lastLen=-1, justSpoke=false, lastSayTs=0;
+let me=null, seen=0, lastLen=-1, justSpoke=false, lastSayTs=0, revealText='', revealTimer=null;
+// word-by-word reveal paced to the voice: ~150 wpm at rate 1, plus the teacup chime's head start
+function reveal(text, rate){
+  revealText=text; clearInterval(revealTimer);
+  const words=text.split(/\s+/).filter(Boolean); const st=document.getElementById('stage');
+  st.innerHTML=words.map(w=>`<span class="w">${esc(w)}</span>`).join('');
+  const per = (60/150)/(rate||1)*1000; let i=0;
+  setTimeout(()=>{ revealTimer=setInterval(()=>{ const el=st.children[i]; if(!el){ clearInterval(revealTimer); return; } el.classList.add('on'); i++; }, per); }, 1400);
+}
 async function poll(){
   try{
     const S=await (await fetch('/api/state')).json();
     me = S.cfg.characters[n-1];
     if(me){ document.documentElement.style.setProperty('--hue', me.hue); document.getElementById('name').textContent=me.name;
       const cls = me.engine==='base' ? 'scroll' : (me.name.includes('Cheshire') ? 'cheshire' : '');
-      const isActive = S.active===me.name || (me.role==='host');
-      document.body.className = cls + (isActive ? '' : ' dim') + (justSpoke ? ' flash' : ''); justSpoke=false; }
+      const speakingMe = S.speaking && S.speaking.player===me.name;
+      const isActive = S.active===me.name || speakingMe;
+      document.body.className = cls + (isActive ? ' active' : ' dim') + (justSpoke ? ' flash' : ''); justSpoke=false;
+      if (speakingMe && S.speaking.text!==revealText) reveal(S.speaking.text, S.rate||0.95); }
     const mine = S.chars[n-1]; document.getElementById('think').className = mine && mine.status==='thinking' ? 'on' : '';
     const mineSays = S.ctx.filter(e=>e.kind==='say' && me && e.player===me.name); const lastMine = mineSays[mineSays.length-1];
     if(lastMine && lastMine.ts!==lastSayTs){ lastSayTs=lastMine.ts; justSpoke=true; }
