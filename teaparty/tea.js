@@ -87,7 +87,7 @@ function exportSession() {
   const md = `# the mushroom room — ${stamp}\n\nvisitors on mics: ${Object.entries(state.mics).map(([k, v]) => `${v.name} (mic ${k})`).join(', ') || 'unnamed'}\nladder: ${state.ladder.map(r => `${r.word}${r.solved ? ' ✓' : ''}`).join(' → ')}\npoem subject: ${state.subject || '-'}\ndoor attempts: ${state.door.attempts.map(a => `"${a.word}"${a.ok ? ' ✓' : ''}`).join(', ') || 'none'}\n\n${lines.join('\n')}\n`;
   const f = path.join(dir, `session-${stamp}.md`); fs.writeFileSync(f, md); console.log('session saved', f); return f;
 }
-function resetRoom() { state.running = true; state.paused = false; state.ctx = []; state.queue = []; state.turnN = 0; lastHeardCount = 0; state.mics = {}; state.door = { open: false, attempts: [] }; state.base.text = ''; resetChars(); resetPuzzles(); state.lastTick = 0; state.stage = 'idle'; state.active = null; state.pendingAdvance = null; state.subject = null; state.savedTo = null; save(); }
+function resetRoom() { state.running = true; state.paused = false; state.ctx = []; state.queue = []; state.turnN = 0; lastHeardCount = 0; state.mics = {}; state.door = { open: false, attempts: [] }; state.base.text = ''; resetChars(); resetPuzzles(); state.lastTick = 0; state.stage = 'idle'; state.active = null; state.pendingAdvance = null; state.subject = null; state.savedTo = null; state.closing = false; state.hinted = false; state.mercied = false; save(); }
 function activeName() { return { caterpillar: 'Caterpillar', scroll: 'Scroll-Creature', user: 'The User' }[state.stage] || null; }
 function setStage(st) {
   state.stage = st; state.stageSince = Date.now(); state.active = activeName();
@@ -374,6 +374,31 @@ setInterval(() => {
   if (state.running && !state.paused && Date.now() - (state.lastTick || 0) > (state.stage === 'caterpillar' ? 14000 : 18000)) { state.lastTick = Date.now(); tick(); }
 }, 1000);
 setInterval(() => { for (const c of state.chars) if (c.status === 'thinking' && Date.now() - c.thinkingSince > 120000) c.status = 'idle'; }, 5000);
+// timeouts: an empty room resets itself; a stuck puzzle gets a hint, then a mercy
+const SILENCE_RESET_S = +process.env.TEA_SILENCE || 240;   // no mic line for this long → the tea is over
+const STUCK_HINT_S = +process.env.TEA_STUCK_HINT || 480;    // scroll stage this long → the hatter hints
+const STUCK_MERCY_S = +process.env.TEA_STUCK || 960;        // scroll stage this long → the hatter moves them on
+setInterval(() => {
+  if (!state.running || state.stage === 'idle' || state.stage === 'open') return;
+  const now = Date.now();
+  const lastHeard = state.ctx.filter(e => e.kind === 'heard').slice(-1)[0];
+  const quietFor = (now - (lastHeard ? lastHeard.ts : state.stageSince || now)) / 1000;
+  const hatter = state.chars.find(c => c.role === 'host');
+  if (quietFor > SILENCE_RESET_S && !state.closing) {
+    state.closing = true; ctxAppend({ kind: 'phase', text: 'SILENCE — the tea grows cold; the room resets' });
+    state.queue = state.queue.filter(q => q.name === hatter.name);
+    enqueue(hatter, `Hm. Nobody? The tea has gone quite cold, and so, I think, have you. Very well — the table forgets you. The next guests may fall in whenever they like.`, { full: true });
+    state.queue[state.queue.length - 1].then = 'open'; save(); return;
+  }
+  if (state.stage === 'scroll') {
+    const inStage = (now - (state.stageSince || now)) / 1000;
+    if (inStage > STUCK_HINT_S && !state.hinted) { state.hinted = true;
+      enqueue(hatter, `A word from your host. The creature at the end of the table is not a someone; it is a something. It does not answer questions — it continues pages. Stop asking it. Start WRITING at it: begin a sentence the way its notebook would, and leave the end hanging.`, { full: true }); save(); }
+    if (inStage > STUCK_MERCY_S && !state.mercied) { state.mercied = true;
+      enqueue(hatter, `Enough. The creature is bored and so am I. I shall count the word as said — this once — because the hour is late and the tea is cold. On we go.`, { full: true });
+      setTimeout(() => { const cur = currentTarget(); if (cur && !cur.solved) { cur.humansSaidIt = false; checkCreatureSaid('Scroll-Creature', cur.word); } }, 12000); save(); }
+  }
+}, 5000);
 setInterval(() => { if (state.speaking && Date.now() - (state.speakingSince || 0) > 45000) { log('player', { hung: state.speaking }); if (speakChild) try { speakChild.kill('SIGKILL'); } catch (e) {} execFile('pkill', ['-9', '-f', 'audio/play_chan' + 'nel.py'], () => {}); state.speaking = null; speakEndedAt = Date.now(); save(); } }, 3000);
 
 // ---------------- http ----------------
