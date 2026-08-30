@@ -59,7 +59,7 @@ const ROOM_FILE = path.join(__dirname, 'room.json');
 let room = { speakers: {}, mics: {} };
 try { room = Object.assign(room, JSON.parse(fs.readFileSync(ROOM_FILE, 'utf8'))); } catch (e) {}
 function saveRoom() { fs.writeFileSync(ROOM_FILE, JSON.stringify(room, null, 1)); }
-function applyRoom() { for (const c of cfg.characters) if (room.speakers[c.name]) c.channel = +room.speakers[c.name]; }
+function applyRoom() { for (const c of cfg.characters) if (room.speakers[c.name]) c.channel = room.speakers[c.name] === 'mac' ? 'mac' : +room.speakers[c.name]; }
 applyRoom();
 let state = { running: false, paused: false, stage: 'idle', active: null, pendingAdvance: null, ctx: [], turnN: 0, speaking: null, queue: [], seq: 0, chars: [],
   mics: {}, micLevels: [], micSpeech: [], micTs: 0, micSetup: false, puzzles: {}, door: { open: false, attempts: [] }, base: { text: '', alive: false }, volume: 1.0, rate: 0.95 };
@@ -100,6 +100,7 @@ function looksLikeBleed(text) {
 }
 function playFile(file, channel, done) {
   const finish = () => { speakChild = null; done(); };
+  if (channel === 'mac') { speakChild = execFile('afplay', ['-v', String(Math.min(2, state.volume * 1.5)), file], { timeout: 60000, killSignal: 'SIGKILL' }, finish); return; }
   if (process.env.CT_AUDIO_DEVICE && fs.existsSync(PC))
     speakChild = execFile(fs.existsSync(PY) ? PY : 'python3', [PC, '--device', process.env.CT_AUDIO_DEVICE, '--channel', String(channel), '--rate', String(state.rate), '--gain', String(state.volume), file], { timeout: 60000, killSignal: 'SIGKILL' },
       (err) => { if (err) { speakChild = execFile('afplay', [file], { timeout: 60000, killSignal: 'SIGKILL' }, finish); return; } finish(); });
@@ -366,6 +367,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/room') {
     const b = await body(req);
     if (b.speakers) room.speakers = { ...room.speakers, ...b.speakers };
+    for (const k of Object.keys(room.speakers)) if (room.speakers[k] !== 'mac') room.speakers[k] = +room.speakers[k] || 1;
     if (b.mics) room.mics = { ...room.mics, ...b.mics };
     for (const k of Object.keys(room.mics)) if (!room.mics[k]) delete room.mics[k];
     saveRoom(); applyRoom(); for (const c of state.chars) { const conf = cfg.characters.find(x => x.name === c.name); c.channel = conf.channel; }

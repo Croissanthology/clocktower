@@ -1,9 +1,9 @@
 {
  "speakers": {
-  "Caterpillar": 2,
-  "Mad Hatter": 1,
-  "Scroll-Creature": 3,
-  "The User": 4
+  "Caterpillar": 1,
+  "Mad Hatter": "mac",
+  "Scroll-Creature": 2,
+  "The User": "mac"
  },
  "mics": {}
 }
