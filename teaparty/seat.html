@@ -1,0 +1,81 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>séance</title>
+<style>
+  :root { --hue:300; --ink:#f3e6c3; }
+  * { box-sizing:border-box; }
+  html, body { height:100%; margin:0; background:#050308; overflow:hidden; color:var(--ink);
+    font: 22px/1.55 "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif; }
+  /* 1. drifting "video": deep hue field, blurred, slowly moving */
+  #bg { position:fixed; inset:-20%; z-index:0; filter:blur(38px) saturate(1.5) brightness(.55);
+    background:
+      radial-gradient(40% 50% at 30% 40%, hsl(var(--hue) 80% 45%), transparent 70%),
+      radial-gradient(35% 45% at 70% 65%, hsl(calc(var(--hue) + 60) 70% 40%), transparent 70%),
+      radial-gradient(60% 60% at 50% 100%, hsl(calc(var(--hue) - 40) 60% 30%), transparent 70%),
+      linear-gradient(160deg, #1a0b26, #0b1a1e 60%, #2a0e0e);
+    animation: drift 38s ease-in-out infinite alternate; }
+  @keyframes drift { 0% { transform:translate(0,0) rotate(0deg) scale(1); } 50% { transform:translate(-4%,3%) rotate(2deg) scale(1.08); } 100% { transform:translate(3%,-3%) rotate(-2deg) scale(1.03); } }
+  /* 2. static */
+  #noise { position:fixed; inset:0; z-index:1; width:100%; height:100%; opacity:.09; mix-blend-mode:overlay; pointer-events:none; image-rendering:pixelated; }
+  #noise.tear { opacity:.35; transform:translateX(6px) skewX(-3deg); transition:none; }
+  /* 3. scanlines */
+  #scan { position:fixed; inset:0; z-index:2; pointer-events:none; background:repeating-linear-gradient(0deg, rgba(0,0,0,.18) 0 1px, transparent 1px 3px); }
+  /* 5. vignette / porthole */
+  #vig { position:fixed; inset:0; z-index:4; pointer-events:none; background:radial-gradient(ellipse 70% 62% at 50% 50%, transparent 40%, rgba(0,0,0,.55) 70%, rgba(0,0,0,.96) 100%); }
+  /* 4. the transcript */
+  #ui { position:relative; z-index:3; height:100%; display:flex; flex-direction:column; align-items:center; padding:5vh 6vw 4vh; }
+  h1 { margin:0 0 2vh; font-style:italic; font-weight:600; font-size:38px; color:hsl(var(--hue) 70% 78%); text-shadow:0 0 18px hsl(var(--hue) 80% 60% / .7), 0 0 2px #000; letter-spacing:.03em; }
+  #feed { width:min(820px, 90vw); flex:1; overflow-y:auto; scrollbar-width:none; mask-image:linear-gradient(to bottom, transparent, #000 8%, #000 92%, transparent); padding:4vh 0; }
+  .line { margin:0 0 18px; text-shadow:0 0 12px hsl(var(--hue) 60% 60% / .35), 0 1px 0 #000; }
+  .line.heard { color:hsl(var(--hue) 20% 65%); font-size:18px; font-style:italic; }
+  .line.creature { color:var(--ink); }
+  .line.creature b { color:hsl(var(--hue) 70% 78%); font-weight:600; font-style:italic; margin-right:8px; }
+  .line.other b { color:hsl(var(--hue) 30% 60%); }
+  .line.phase { color:#e9c46a; letter-spacing:.14em; font-size:14px; text-transform:uppercase; text-align:center; }
+  .ch { opacity:0; animation:appear .5s forwards; }
+  @keyframes appear { to { opacity:1; } }
+  #think { height:40px; color:hsl(var(--hue) 60% 70%); font-size:26px; opacity:0; transition:opacity .6s; }
+  #think.on { opacity:.9; animation:spin 4s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  #foot { color:hsl(var(--hue) 20% 50%); font-size:13px; letter-spacing:.2em; text-transform:uppercase; }
+  .scroll #bg { filter:blur(30px) saturate(.6) brightness(.5) sepia(.8); }
+  .scroll #ui { background:radial-gradient(ellipse at 50% 40%, rgba(120,90,40,.12), transparent 70%); }
+  .scroll .line.creature { font:19px/1.7 "Courier New", Courier, monospace; color:#e8d9b0; letter-spacing:.02em; }
+  .scroll h1 { font-family:"Courier New", Courier, monospace; font-style:normal; }
+  .cheshire #ui { animation:fadeplay 23s ease-in-out infinite; }
+  @keyframes fadeplay { 0%,100% { opacity:1 } 46% { opacity:1 } 52% { opacity:.2 } 58% { opacity:1 } }
+</style>
+<body>
+<div id="bg"></div><canvas id="noise" width="128" height="96"></canvas><div id="scan"></div><div id="vig"></div>
+<div id="ui"><h1 id="name">…</h1><div id="feed"></div><div id="think">✦</div><div id="foot">mushroom · séance terminal</div></div>
+<script>
+const n = +(new URLSearchParams(location.search).get('n') || 1);
+function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+function letters(s){ let i=0; return esc(s).replace(/(&[a-z]+;|.)/g, m=>`<span class="ch" style="animation-delay:${(i++)*22}ms">${m}</span>`); }
+// static
+const cv=document.getElementById('noise'), cx=cv.getContext('2d'); const img=cx.createImageData(cv.width,cv.height);
+setInterval(()=>{ const d=img.data; for(let i=0;i<d.length;i+=4){ const v=(Math.random()*255)|0; d[i]=d[i+1]=d[i+2]=v; d[i+3]=255; } cx.putImageData(img,0,0); }, 1000/12);
+setInterval(()=>{ if(Math.random()<.5){ cv.classList.add('tear'); setTimeout(()=>cv.classList.remove('tear'), 90+Math.random()*160); } }, 25000);
+let me=null, seen=0, lastLen=-1;
+async function poll(){
+  try{
+    const S=await (await fetch('/api/state')).json();
+    me = S.cfg.characters[n-1];
+    if(me){ document.documentElement.style.setProperty('--hue', me.hue); document.getElementById('name').textContent=me.name;
+      document.body.className = me.engine==='base' ? 'scroll' : (me.name.includes('Cheshire') ? 'cheshire' : ''); }
+    const mine = S.chars[n-1]; document.getElementById('think').className = mine && mine.status==='thinking' ? 'on' : '';
+    if(S.ctx.length!==lastLen){
+      lastLen=S.ctx.length; const f=document.getElementById('feed'); const items=S.ctx.slice(-40);
+      f.innerHTML = items.map((e,i)=>{
+        const fresh = i>=items.length-2;
+        if(e.kind==='heard') return `<p class="line heard">${esc(e.who)}: ${esc(e.text)}</p>`;
+        if(e.kind==='say'){ const isMe = me && e.player===me.name; return `<p class="line creature ${isMe?'':'other'}"><b>${esc(e.player)}</b>${fresh&&isMe?letters(e.text):esc(e.text)}</p>`; }
+        return `<p class="line phase">${esc(e.text)}</p>`;
+      }).join(''); f.scrollTop=f.scrollHeight;
+    }
+  }catch(e){}
+  setTimeout(poll, 900);
+}
+poll();
+</script>
+</body>

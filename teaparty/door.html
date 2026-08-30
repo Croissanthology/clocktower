@@ -1,0 +1,46 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>the little door</title>
+<style>
+  * { box-sizing:border-box; }
+  html, body { height:100%; margin:0; overflow:hidden; }
+  body { background:#2a1d12; color:#f1e4c4; font:22px/1.5 "Iowan Old Style", Palatino, Georgia, serif; display:flex; align-items:center; justify-content:center;
+    background-image:radial-gradient(ellipse at 50% 30%, #6b4a2a 0%, #3a2716 45%, #1a110a 100%); }
+  #vig { position:fixed; inset:0; pointer-events:none; background:radial-gradient(ellipse 65% 60% at 50% 50%, transparent 45%, rgba(0,0,0,.85) 100%); }
+  .wrap { position:relative; text-align:center; width:min(720px,92vw); }
+  h1 { font-style:italic; font-weight:600; font-size:34px; margin:0 0 6px; letter-spacing:.04em; color:#f5e6bd; text-shadow:0 0 14px rgba(255,200,120,.35); }
+  .sub { color:#b89a6a; font-size:15px; letter-spacing:.18em; text-transform:uppercase; margin-bottom:34px; }
+  .frame { width:230px; height:330px; margin:0 auto 34px; border:14px solid #3b2612; border-radius:120px 120px 8px 8px; background:#120b06; position:relative; perspective:900px;
+    box-shadow:0 0 0 3px #8a6a3a inset, 0 30px 60px rgba(0,0,0,.6); }
+  .door { position:absolute; inset:0; border-radius:106px 106px 0 0; background:linear-gradient(90deg,#7a4d24,#a56d34 45%,#6f4420); transform-origin:left; transition:transform 1.8s cubic-bezier(.5,0,.2,1);
+    background-image:repeating-linear-gradient(90deg, rgba(0,0,0,.18) 0 2px, transparent 2px 38px), linear-gradient(90deg,#7a4d24,#a56d34 45%,#6f4420); }
+  .door::after { content:""; position:absolute; right:22px; top:52%; width:16px; height:16px; border-radius:50%; background:#d9b25a; box-shadow:0 0 10px #ffd27a; }
+  .open .door { transform:rotateY(-108deg); }
+  .light { position:absolute; inset:0; border-radius:106px 106px 0 0; background:radial-gradient(ellipse at 50% 40%, #fff3c4, #f0c060 40%, #6a3c10 100%); opacity:0; transition:opacity 2s; }
+  .open .light { opacity:1; }
+  form { display:flex; gap:10px; justify-content:center; }
+  input { font:inherit; font-size:24px; width:min(440px,70vw); padding:12px 18px; background:#f3e6c4; color:#2a1d12; border:2px solid #8a6a3a; border-radius:10px; text-align:center; letter-spacing:.05em; }
+  input:focus { outline:none; border-color:#d9b25a; }
+  button { font:inherit; font-size:18px; background:#5a3a1a; color:#f3e6c4; border:2px solid #8a6a3a; border-radius:10px; padding:0 22px; cursor:pointer; }
+  #msg { min-height:36px; margin-top:22px; font-style:italic; color:#e8c98a; }
+  .shake { animation:shake .5s; }
+  @keyframes shake { 20%,60% { transform:translateX(-10px) } 40%,80% { transform:translateX(10px) } }
+  .win #msg { color:#ffe9a8; font-size:26px; }
+</style>
+<body>
+<div id="vig"></div>
+<div class="wrap" id="wrap">
+  <h1>The Little Door</h1><div class="sub">who comes so late to so small a door?</div>
+  <div class="frame"><div class="light"></div><div class="door"></div></div>
+  <form onsubmit="go(event)"><input id="w" placeholder="speak the word" autocomplete="off" autofocus><button>speak</button></form>
+  <div id="msg"></div>
+</div>
+<script>
+async function go(ev){ ev.preventDefault(); const w=document.getElementById('w'); const word=w.value.trim(); if(!word) return;
+  const r=await (await fetch('/api/door',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({word})})).json();
+  const wrap=document.getElementById('wrap'); document.getElementById('msg').textContent=r.line;
+  if(r.ok){ wrap.classList.add('open','win'); try{ new AudioContext(); }catch(e){} }
+  else { wrap.classList.remove('shake'); void wrap.offsetWidth; wrap.classList.add('shake'); }
+  w.value=''; w.focus(); }
+</script>
+</body>
