@@ -213,7 +213,7 @@ function checkCreatureSaid(name, text) {
     if (state.rung + 1 < state.ladder.length) {
       state.rung++;
       const next = state.ladder[state.rung].word.toLowerCase();
-      enqueue(hatter, `Ding, ding, ding! It said it, and none of you did. But the tea is not finished. The next word you must draw out of the creature is... "${next}". Say it yourselves and the word is spoilt. Off you go.`);
+      enqueue(hatter, `Ding, ding, ding! It said "${t.word.toLowerCase()}", and none of you did. But the tea is not finished. Listen carefully: the word is now... "${next}". I say again: the word is now "${next}". Make the creature say "${next}". Say it yourselves and it is spoilt. Off you go.`);
       setTimeout(() => { const sc = state.chars.find(c => c.engine === 'base'); if (sc && sc.status !== 'thinking' && !state.queue.some(q => q.name === sc.name)) scrollTurn(sc); }, 25000);
     } else state.pendingAdvance = 'congrats';
   }
