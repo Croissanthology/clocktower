@@ -332,8 +332,11 @@ function tick() {
   save();
 }
 setInterval(() => {
-  if (state.pendingAdvance) { const leaving = state.active; state.queue = state.queue.filter(q => q.name !== leaving); }   // the leaving guest's backlog is dropped; its current line finishes
-  if (state.pendingAdvance && !state.speaking && !state.queue.length) { const st = state.pendingAdvance; state.pendingAdvance = null; setStage(st); }
+  if (state.pendingAdvance) {   // the leaving guest is cut off the instant it hands over: backlog dropped, current line killed
+    const leaving = state.active; state.queue = state.queue.filter(q => q.name !== leaving);
+    if (state.speaking && state.speaking.player === leaving) { if (speakChild) try { speakChild.kill('SIGKILL'); } catch (e) {} state.speaking = null; speakEndedAt = Date.now(); }
+    if (!state.speaking) { const st = state.pendingAdvance; state.pendingAdvance = null; setStage(st); }
+  }
   if (state.running && !state.paused && Date.now() - (state.lastTick || 0) > (state.stage === 'caterpillar' ? 14000 : 18000)) { state.lastTick = Date.now(); tick(); }
 }, 1000);
 setInterval(() => { for (const c of state.chars) if (c.status === 'thinking' && Date.now() - c.thinkingSince > 120000) c.status = 'idle'; }, 5000);
