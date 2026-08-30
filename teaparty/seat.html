@@ -61,7 +61,8 @@
 <div id="bg"></div><canvas id="noise" width="128" height="96"></canvas><div id="scan"></div><div id="vig"></div>
 <div id="ui"><h1 id="name">…</h1><div id="feed"></div><div id="stage"></div><div id="think">✦</div><div id="foot">mushroom · séance terminal</div></div>
 <script>
-const n = +(new URLSearchParams(location.search).get('n') || 1);
+const nParam = new URLSearchParams(location.search).get('n') || '1';
+let n = +nParam || 1; const AUTO = nParam === 'auto';   // ?n=auto → this screen follows whoever is speaking / active
 function esc(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
 function letters(s){ let i=0; return esc(s).replace(/(&[a-z]+;|.)/g, m=>`<span class="ch" style="animation-delay:${(i++)*22}ms">${m}</span>`); }
 // static
@@ -80,6 +81,7 @@ function reveal(text, rate){
 async function poll(){
   try{
     const S=await (await fetch('/api/state')).json();
+    if (AUTO) { const want = (S.speaking && S.speaking.player) || S.active || (S.cfg.characters[2] && S.cfg.characters[2].name); const i = S.cfg.characters.findIndex(c => c.name === want); if (i >= 0) n = i + 1; }
     me = S.cfg.characters[n-1];
     if(me){ document.documentElement.style.setProperty('--hue', me.hue); document.getElementById('name').textContent=me.name;
       const cls = me.engine==='base' ? 'scroll' : (me.name.includes('Cheshire') ? 'cheshire' : '');
