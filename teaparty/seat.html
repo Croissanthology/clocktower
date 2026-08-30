@@ -57,6 +57,7 @@
   @keyframes begun { 0% { filter:brightness(3) } 100% { filter:brightness(1) } }
   .line.heard.bright { color:var(--ink); font-size:24px; font-style:normal; }
   #stage .w { opacity:0; display:inline-block; margin-right:.28em; transform:translateY(6px); transition:opacity .35s, transform .35s; }
+  #stage.long { font-size:clamp(18px, 2.3vw, 30px); line-height:1.4; } #stage.long .w { opacity:.28; transform:none; }
   #stage .w.on { opacity:1; transform:none; }
   .scroll #stage { font-family:"Courier New", Courier, monospace; font-size:clamp(24px,3.4vw,40px); color:#e8d9b0; text-align:left; }
   .scroll #bg { filter:blur(30px) saturate(.6) brightness(.5) sepia(.8); }
@@ -86,6 +87,7 @@ let me=null, seen=0, lastLen=-1, justSpoke=false, lastSayTs=0, revealText='', re
 function reveal(text, rate){
   revealText=text; clearInterval(revealTimer);
   const words=text.split(/\s+/).filter(Boolean); const st=document.getElementById('stage');
+  st.className = words.length > 55 ? 'long' : '';   // long speeches: all visible at once, smaller; words brighten as spoken
   st.innerHTML=words.map(w=>`<span class="w">${esc(w)}</span>`).join('');
   const per = (60/150)/(rate||1)*1000; let i=0;
   setTimeout(()=>{ revealTimer=setInterval(()=>{ const el=st.children[i]; if(!el){ clearInterval(revealTimer); return; } el.classList.add('on'); el.scrollIntoView({block:'nearest'}); i++; }, per); }, 1400);

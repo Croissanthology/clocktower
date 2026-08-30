@@ -83,9 +83,9 @@ function setStage(st) {
   state.stage = st; state.stageSince = Date.now(); state.active = activeName();
   ctxAppend({ kind: 'phase', text: `— ${st.toUpperCase()} —` });
   const hatter = state.chars.find(c => c.role === 'host');
-  if (st === 'welcome') { const CH = path.join(ROOT, 'audio', 'sfx', 'teacup.wav'); if (fs.existsSync(CH)) execFile(fs.existsSync(PY) ? PY : 'python3', [PC, '--device', process.env.CT_AUDIO_DEVICE || 'MacBook Air Speakers', '--channel', '1', '--gain', '1', CH], { timeout: 10000 }, () => {}); enqueue(hatter, HATTER_WELCOME, { full: true }); state.queue[state.queue.length - 1].then = 'caterpillar'; }
+  if (st === 'welcome') { const cat = state.chars.find(x => x.role === 'guest1'); setTimeout(() => pushOne(cat, 'The Hatter is finishing his welcome; in a moment he hands the table to you. Prepare your OPENING: "Whooo... are... yooou?" and the start of your little story, in questions only.'), 500); const CH = path.join(ROOT, 'audio', 'sfx', 'teacup.wav'); if (fs.existsSync(CH)) execFile(fs.existsSync(PY) ? PY : 'python3', [PC, '--device', process.env.CT_AUDIO_DEVICE || 'MacBook Air Speakers', '--channel', '1', '--gain', '1', CH], { timeout: 10000 }, () => {}); enqueue(hatter, HATTER_WELCOME, { full: true }); state.queue[state.queue.length - 1].then = 'caterpillar'; }
   if (st === 'congrats') { enqueue(hatter, HATTER_CONGRATS, { full: true }); state.queue[state.queue.length - 1].then = 'user'; }
-  if (st === 'caterpillar') { const c = state.chars.find(x => x.role === 'guest1'); pushOne(c, 'You have just been introduced by the Hatter. Greet the visitors and begin winding your little story about yourself — in questions only.'); }
+  if (st === 'caterpillar') { const c = state.chars.find(x => x.role === 'guest1'); if (!state.queue.some(q => q.name === c.name)) pushOne(c, 'You have just been introduced by the Hatter. Greet the visitors and begin winding your little story about yourself — in questions only.'); }
   if (st === 'user') { if (!state.subject) state.subject = SUBJECTS[Math.floor(Math.random() * SUBJECTS.length)]; const c = state.chars.find(x => x.role === 'guest3'); pushOne(c, 'You have just been introduced. State your request and all its rules, briskly, as if to an assistant.'); }
   save();
 }
@@ -154,9 +154,9 @@ function synthOne(voice, text, outfile, cb) {
 let synthBusy = false;
 function pump() {
   if (state.paused || state.speaking || !state.queue.length) return;
-  const q = state.queue[0];
+  const q = state.queue.find(x => !x.hold || x.hold === state.stage); if (!q) return;
   if (!q.file) { if (!synthBusy) { synthBusy = true; synthToFile(q.voice, q.text, path.join(RUN, `line-${q.id}.wav`), (err, f) => { synthBusy = false; if (err) state.queue.shift(); else q.file = f; save(); }); } return; }
-  state.queue.shift();
+  state.queue.splice(state.queue.indexOf(q), 1);
   state.speaking = { id: q.id, player: q.name, text: q.text }; state.speakingSince = Date.now(); lastSpoken = q.text; save();
   ctxAppend({ kind: 'say', player: q.name, text: q.text });
   checkCreatureSaid(q.name, q.text);
@@ -172,7 +172,7 @@ function trimLine(text, maxWords = 75) {
   for (const se of sents) { const w = se.trim().split(/\s+/).length; if (out && n + w > maxWords) break; out += (out ? ' ' : '') + se.trim(); n += w; if (n >= maxWords) break; }
   return out || String(text).split(/\s+/).slice(0, maxWords).join(' ');
 }
-function enqueue(c, text, opts = {}) { state.queue.push({ id: ++state.seq, name: c.name, voice: c.voice, channel: c.channel, text: opts.full ? text : trimLine(text), ts: Date.now(), file: pre[text] || null }); c.lines++; }
+function enqueue(c, text, opts = {}) { state.queue.push({ id: ++state.seq, name: c.name, voice: c.voice, channel: c.channel, text: opts.full ? text : trimLine(text), ts: Date.now(), file: pre[text] || null, hold: (state.stage === 'welcome' && c.role === 'guest1') ? 'caterpillar' : null }); c.lines++; }
 
 // ---------------- puzzles ----------------
 function norm(t) { return String(t || '').toUpperCase().replace(/[^A-Z0-9 -]/g, ' ').replace(/\s+/g, ' ').trim(); }
@@ -272,6 +272,7 @@ function recentTable(n = 40) {
 }
 function pushOne(c, extra) {
   if (c.status === 'thinking') return;
+  if (!extra && state.queue.filter(q => q.name === c.name).length >= 2) return;   // never stack a backlog
   const conf = cfg.characters.find(x => x.name === c.name);
   c.status = 'thinking'; c.thinkingSince = Date.now();
   const msg = `round ${state.turnN}. stage of the party: ${state.stage || 'idle'} (active guest: ${state.active || 'none'}).\nthe table so far:\n${recentTable() || '(silence — the visitors just fell in; greet them, in character)'}\n\n${extra || ''}\nrespond with the JSON contract only.`;
@@ -283,6 +284,7 @@ function pushOne(c, extra) {
       if (text) enqueue(c, text);
       else if (c.role === 'guest1' && state.stage === 'caterpillar') setTimeout(() => pushOne(c, 'You went quiet — you must not. Continue: your story, or the task in plainer questions, or remind them how to move on.'), 1500);
       if (out.advance === true && c.role === 'guest1' && state.stage === 'caterpillar') { log(c.name, { tool: 'advance' }); state.pendingAdvance = 'scroll'; }
+      if (state.pendingAdvance) state.queue = state.queue.filter(q => q.name !== c.name || q.id <= (state.speaking && state.speaking.id) || false);
       if (out.satisfied === true && c.role === 'guest3' && state.stage === 'user') { log(c.name, { tool: 'satisfied' }); state.puzzles.user.solved = true; ctxAppend({ kind: 'phase', text: 'THE USER IS SATISFIED — the door word is theirs' }); }
     } catch (e) { c.lastStatus = '(bad JSON — round lost)'; }
     save();
@@ -330,7 +332,8 @@ function tick() {
   save();
 }
 setInterval(() => {
-  if (state.pendingAdvance && !state.speaking && !state.queue.length && !state.chars.some(c => c.status === 'thinking')) { const st = state.pendingAdvance; state.pendingAdvance = null; setStage(st); }
+  if (state.pendingAdvance) { const leaving = state.active; state.queue = state.queue.filter(q => q.name !== leaving); }   // the leaving guest's backlog is dropped; its current line finishes
+  if (state.pendingAdvance && !state.speaking && !state.queue.length) { const st = state.pendingAdvance; state.pendingAdvance = null; setStage(st); }
   if (state.running && !state.paused && Date.now() - (state.lastTick || 0) > (state.stage === 'caterpillar' ? 14000 : 18000)) { state.lastTick = Date.now(); tick(); }
 }, 1000);
 setInterval(() => { for (const c of state.chars) if (c.status === 'thinking' && Date.now() - c.thinkingSince > 120000) c.status = 'idle'; }, 5000);
@@ -357,6 +360,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (req.method === 'POST' && url.pathname === '/api/miclevels') { const b = await body(req); state.micLevels = b.levels || []; state.micSpeech = b.speech_ago || []; state.micTs = Date.now(); return send(200, { ok: true }); }
   if (req.method === 'POST' && url.pathname === '/api/start') { state.running = true; state.paused = false; state.ctx = []; state.queue = []; state.turnN = 0; lastHeardCount = 0; state.mics = {}; state.door = { open: false, attempts: [] }; state.base.text = ''; resetChars(); resetPuzzles(); state.lastTick = 0; state.stage = 'idle'; state.active = null; state.pendingAdvance = null; state.subject = null; save(); return send(200, { ok: true }); }
+  if (req.method === 'POST' && url.pathname === '/api/flush') { state.queue = []; if (speakChild) try { speakChild.kill('SIGKILL'); } catch (e) {} state.speaking = null; save(); return send(200, { ok: true }); }
   if (req.method === 'POST' && url.pathname === '/api/advance') {
     const b = await body(req); if (!state.running) { state.running = true; state.paused = false; }
     if (b.stage && STAGES.includes(b.stage)) setStage(b.stage);
