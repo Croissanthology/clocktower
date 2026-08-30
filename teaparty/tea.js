@@ -94,6 +94,14 @@ function resetPuzzles() { state.puzzles = { mushroom: { solved: false, humansSai
 function currentTarget() { return (state.ladder || [])[state.rung || 0]; }
 resetChars(); resetPuzzles();
 function save() { fs.writeFileSync(path.join(RUN, 'state.json'), JSON.stringify(state, null, 1)); }
+try {
+  const d = JSON.parse(fs.readFileSync(path.join(RUN, 'state.json'), 'utf8'));
+  if (d && d.chars && d.chars.length === cfg.characters.length) {
+    Object.assign(state, d, { speaking: null, queue: [], pendingAdvance: null, paused: false });
+    for (const c of state.chars) c.status = 'idle';
+    console.log('resumed:', state.stage, 'rung', state.rung);
+  }
+} catch (e) {}
 function log(name, e) { fs.appendFileSync(path.join(RUN, `log-${name.replace(/[^\w-]/g, '_')}.jsonl`), JSON.stringify({ ts: new Date().toISOString(), ...e }) + '\n'); }
 function ctxAppend(e) { state.ctx.push({ ...e, ts: Date.now() }); if (state.ctx.length > 1500) state.ctx.splice(0, 300); }
 
@@ -188,6 +196,7 @@ function checkCreatureSaid(name, text) {
       state.rung++;
       const next = state.ladder[state.rung].word.toLowerCase();
       enqueue(hatter, `Ding, ding, ding! It said it, and none of you did. But the tea is not finished. The next word you must draw out of the creature is... "${next}". Say it yourselves and the word is spoilt. Off you go.`);
+      setTimeout(() => { const sc = state.chars.find(c => c.engine === 'base'); if (sc && sc.status !== 'thinking' && !state.queue.some(q => q.name === sc.name)) scrollTurn(sc); }, 25000);
     } else state.pendingAdvance = 'congrats';
   }
   // a creature speaking in rhyme without being asked: rough couplet check (last words of consecutive sentences)
