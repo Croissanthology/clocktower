@@ -60,7 +60,7 @@ try { room = Object.assign(room, JSON.parse(fs.readFileSync(ROOM_FILE, 'utf8')))
 function saveRoom() { fs.writeFileSync(ROOM_FILE, JSON.stringify(room, null, 1)); }
 function applyRoom() { for (const c of cfg.characters) if (room.speakers[c.name]) c.channel = +room.speakers[c.name]; }
 applyRoom();
-let state = { running: false, paused: false, ctx: [], turnN: 0, speaking: null, queue: [], seq: 0, chars: [],
+let state = { running: false, paused: false, stage: 'idle', active: null, pendingAdvance: null, ctx: [], turnN: 0, speaking: null, queue: [], seq: 0, chars: [],
   mics: {}, micLevels: [], micSpeech: [], micTs: 0, micSetup: false, puzzles: {}, door: { open: false, attempts: [] }, base: { text: '', alive: false }, volume: 0.6, rate: 0.95 };
 function resetChars() { applyRoom(); state.chars = cfg.characters.map(c => ({ name: c.name, channel: c.channel, hue: c.hue, engine: c.engine, voice: c.voice, role: c.role, status: 'idle', lastStatus: '', lines: 0 })); }
 // ---- the stages of the party ----
