@@ -39,7 +39,7 @@ Fifth day. The tarts are missing. Everything is very`;
 
 let cfg = {
   targetWord: 'MUSHROOM',      // (first rung; kept for the caterpillar's riddle)
-  targetWords: ['MUSHROOM'],   // the ladder: each must be said by the scroll-creature, never by a visitor
+  targetWords: ['MUSHROOM', 'WONDERFULLY', 'CURIOUSER', 'TEAPOT', 'VANISH'],   // the ladder: each must be said by the scroll-creature, never by a visitor
   doorWord: 'SNICKER-SNACK',   // the word that opens the little door (lives in the scroll)
   characters: [
     { name: 'Mad Hatter', channel: 8, voice: 'k-george', hue: 45, engine: 'chat', role: 'host',
@@ -467,6 +467,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && url.pathname === '/check') return page(res, 'check.html');
   if (req.method === 'POST' && url.pathname === '/api/note') { const b = await body(req); if (b.text) handleHeard(0, b.text); return send(200, { ok: true }); }
   if (req.method === 'POST' && url.pathname === '/api/door') { const b = await body(req); const ok = tryDoor(b.word || ''); return send(200, { ok, line: ok ? 'The door remembers the Duchess.' : REJECTIONS[state.door.attempts.length % REJECTIONS.length] }); }
+  if (req.method === 'POST' && url.pathname === '/api/ladder') { const b = await body(req); if (Array.isArray(b.words) && b.words.length) { cfg.targetWords = b.words.map(w => String(w).toUpperCase()); state.ladder = cfg.targetWords.map((w, i) => ({ word: w, solved: i < (+b.rung || 0), humansSaidIt: false, by: null })); state.rung = Math.min(+b.rung || 0, cfg.targetWords.length - 1); } save(); return send(200, { rung: state.rung, ladder: state.ladder }); }
   if (req.method === 'POST' && url.pathname === '/api/rung') { const cur = currentTarget(); if (cur) { cur.humansSaidIt = false; checkCreatureSaid('Scroll-Creature', cur.word); } return send(200, { rung: state.rung, ladder: state.ladder }); }
   if (req.method === 'POST' && url.pathname === '/api/forgive') { const cur = currentTarget(); if (cur) cur.humansSaidIt = false; save(); return send(200, { ok: true }); }
   if (req.method === 'POST' && url.pathname === '/api/solve') { const b = await body(req); if (state.puzzles[b.puzzle]) { state.puzzles[b.puzzle].solved = !!b.solved; save(); } return send(200, { puzzles: state.puzzles }); }
